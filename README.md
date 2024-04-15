@@ -22,7 +22,7 @@ Then you activate it by:
 ```bash
 conda activate homo3d
 ```
-# Tips
+##### Tips
 
 If you have previously used vcpkg to configure your C++ environment, please modify set(CMAKE_IGNORE_PATH "C:/vcppkg/vcpkg/installed/x64-windows/share/gflags") in the CMakeLists to avoid conflicts.
 
@@ -40,7 +40,7 @@ make -j4
 
 If the conda environment is activated, `cmake` will automatically checkout the dependencies in this environment.
 
-## Windows
+#### Windows
 
 On Windows platform, we recommend using CMake with Visual Studio for compilation. Enter the following command in the command line:
 
