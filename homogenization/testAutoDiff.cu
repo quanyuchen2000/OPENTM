@@ -207,5 +207,3 @@ void cudaTest(void) {
 	x.toVdb("rho1");
 #endif
 }
-
-extern void runCustom(cfg::HomoConfig config);

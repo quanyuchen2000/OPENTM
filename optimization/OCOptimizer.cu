@@ -140,7 +140,7 @@ void OCOptimizer::filterSens(float* sens, const float* rho, size_t pitchT, int r
 	}
 	float* newsens;
 	cudaMalloc(&newsens, sizeof(float) * reso[1] * reso[2] * pitchT);
-	radial_convker_t<float, Linear> convker(radius, 0, true, FLAGS_periodfilt);
+	radial_convker_t<float, Linear> convker(radius, 0, true, 10);
 	devArray_t<int, 3> ereso{ reso[0],reso[1],reso[2] };
 	size_t grid_size, block_size;
 	make_kernel_param(&grid_size, &block_size, ne, 256);
@@ -185,7 +185,7 @@ __global__ void filterSens_Tensor_kernel(
 void OCOptimizer::filterSens(Tensor<float> sens, Tensor<float> rho, float radius /*= 2*/) {
 	Tensor<float> newsens(rho.getDim());
 	newsens.reset(0);
-	radial_convker_t<float, Linear> convker(radius, 0, true, FLAGS_periodfilt);
+	radial_convker_t<float, Linear> convker(radius, 0, true, 10);
 	size_t grid_size, block_size;
 	make_kernel_param(&grid_size, &block_size, rho.size(), 256);
 	filterSens_Tensor_kernel << <grid_size, block_size >> > (sens.view(), rho.view(), newsens.view(), convker);

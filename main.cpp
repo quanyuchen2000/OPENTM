@@ -1,30 +1,46 @@
 ﻿// homo3d.cpp : 此文件包含 "main" 函数。程序执行将在此处开始并结束。
 //
-
+// if you are sure
 #include <iostream>
 #include "cmdline.h"
 #include "openvdb/tools/VolumeToMesh.h"
 #include "voxelIO/openvdb_wrapper_t.h"
 #include <fstream>
+#include <algorithm>
+// include files for write things in main
+#include "AutoDiff/TensorExpression.h"
+#include "homogenization/homogenization.h"
+#include "homogenization/homoExpression.h"
+#include "homogenization/grid.h"
+
 extern void cuda_test(void);
 extern void testAutoDiff(void);
-extern void testAutoDiff_cu(void);
 extern void test_MMA(cfg::HomoConfig, int mode);
-extern void test_OC(void);
-extern void testHomogenization(cfg::HomoConfig config);
-extern void test_BulkModulus(void);
-extern void test_ShearModulus(void);
-extern void test_NegativePoisson(void);
-extern void runInstance(cfg::HomoConfig);
-
+extern std::vector<float> runCustom(cfg::HomoConfig config);
+extern void initDensity(homo::var_tsexp_t<>& rho, cfg::HomoConfig config);
 namespace homo {
 	extern std::string setPathPrefix(const std::string& fprefix);
 }
 
-int main(int argc, char** argv)
+int main()
 {
+	int argc = 1;
+	char** argv = nullptr;
 	cfg::HomoConfig config;
-	config.parse(argc, argv);
+	config.init();
+	int reso = config.reso[0];
+	config.sym = cfg::Symmetry::NONE;
+	int ne = pow(reso, 3);
+	float goalVolRatio = 0.3;
+	homo::Homogenization_H hom_H(config);
+	homo::var_tsexp_t<> rho_H(reso, reso, reso);
+	initDensity(rho_H, config);
+	// auto rhop_H = rho_H.conv(homo::radial_convker_t<float, homo::RadialConvWeight::Spline4>(1.5, 0)).pow(3);
+	auto rhop_H = rho_H.pow(3);
+	homo::heat_tensor_t <float, decltype(rhop_H)> Hh(hom_H, rhop_H);
+	auto objective1 = (Hh(0, 0) - 0.5).pow(2) + (Hh(1, 1) - 0.3).pow(2) + (Hh(2, 2) - 0.4).pow(2) - 0.0001;
+	rhop_H.value().toMatlab("rhop");
+	hom_H.grid->writeDensity("density", homo::VoxelIOFormat::openVDB);
 
     std::cout << "Hello World!\n";
 	cuda_test();
@@ -42,5 +58,180 @@ int main(int argc, char** argv)
 		exit(-1);
 	}
 }
+std::vector<float> runInstance(int reso, std::vector<double> heat_ratios, std::vector<double> target_ratio, cfg::InitWay initway, cfg::Model model) {
+	cfg::HomoConfig config;
+	config.init();
+	config.reso[0] = reso;
+	config.reso[1] = reso;
+	config.reso[2] = reso;
+	if (heat_ratios.size() != 2) {
+		std::cout << "Input wrong size of heat_ratios" << std::endl;
+		exit(-1);
+	}
+	for (int i = 0; i < 2; i++)
+		config.heatRatio[i] = heat_ratios[i];
+	for (int i = 0; i < 6; i++)
+		config.target_tensor[i] = target_ratio[i];
+	config.winit = initway;
+	config.model = model;
+	return runCustom(config);
+}
 
+/* below is the code for user to bind python .pyd file*/
+//#include <pybind11/pybind11.h>
+//#include <pybind11/stl.h>
+//namespace py = pybind11;
+//PYBIND11_MODULE(homo3d, m) {
+//	m.doc() = "....";
+//	py::enum_<cfg::InitWay>(m, "InitWay")
+//		.value("random", cfg::InitWay::random)
+//		.value("randcenter", cfg::InitWay::randcenter)
+//		.value("noise", cfg::InitWay::noise)
+//		.value("manual", cfg::InitWay::manual)
+//		.value("interp", cfg::InitWay::interp)
+//		.value("rep_randcenter", cfg::InitWay::rep_randcenter)
+//		.value("P", cfg::InitWay::P)
+//		.value("G", cfg::InitWay::G)
+//		.value("D", cfg::InitWay::D)
+//		.value("IWP", cfg::InitWay::IWP)
+//		.value("example", cfg::InitWay::example);
+//
+//	py::enum_<cfg::Model>(m, "Model")
+//		.value("mma", cfg::Model::mma)
+//		.value("oc", cfg::Model::oc);
+//	m.def("runInstance", &runInstance, py::arg("reso"), py::arg("heat_ratios"), py::arg("target_ratio"),
+//		py::arg("initway") = cfg::InitWay::IWP, py::arg("model") = cfg::Model::mma);
+//}
 
+/* below is the code for user to build matlab .mex64w file*/
+#include "mex.hpp"
+#include "mexAdapter.hpp"
+
+class MexFunction : public matlab::mex::Function {
+    std::shared_ptr<matlab::engine::MATLABEngine> matlabPtr = getEngine();
+    matlab::data::ArrayFactory factory;
+    std::ostringstream stream;
+public:
+    void operator()(matlab::mex::ArgumentList outputs, matlab::mex::ArgumentList inputs) {
+        checkArguments(outputs, inputs);
+        // double trran = inputs[0][0];
+        // int reso = int(trran);
+       /* matlab::data::TypedArray<double> heat_ratiom = std::move(inputs[1]);
+        std::vector<double> heat_ratio(2);
+        for (int i = 0; i < 2; i++)
+            heat_ratio[i] = heat_ratiom[i];
+        matlab::data::TypedArray<double> ttm = std::move(inputs[2]);
+        std::vector<double> target_tensor(6);
+        for (int i = 0; i < 6; i++)
+            target_tensor[i] = ttm[i];
+        cfg::InitWay initway;
+        matlab::data::TypedArrayRef<matlab::data::MATLABString> inArrayRef1 = inputs[3][0];
+        auto tstring = std::string(inArrayRef1[0]);
+        if (tstring == "random")
+            initway = cfg::InitWay::random;
+        else if (tstring == "randcenter")
+            initway = cfg::InitWay::randcenter;
+        else if (tstring == "noise")
+            initway = cfg::InitWay::noise;
+        else if (tstring == "manual")
+            initway = cfg::InitWay::manual;
+        else if (tstring == "interp")
+            initway = cfg::InitWay::interp;
+        else if (tstring == "rep_randcenter")
+            initway = cfg::InitWay::rep_randcenter;
+        else if (tstring == "P")
+            initway = cfg::InitWay::P;
+        else if (tstring == "G")
+            initway = cfg::InitWay::G;
+        else if (tstring == "D")
+            initway = cfg::InitWay::D;
+        else if (tstring == "IWP")
+            initway = cfg::InitWay::IWP;
+        else if (tstring == "example")
+            initway = cfg::InitWay::example;
+        matlab::data::TypedArrayRef<matlab::data::MATLABString> inArrayRef2 = inputs[4][0];
+        tstring = std::string(inArrayRef2[0]);
+        cfg::Model model;
+        if (tstring == "mma")
+            model = cfg::Model::mma;
+        else if (tstring == "oc")
+            model = cfg::Model::oc;
+        auto result = runInstance(reso,heat_ratio,target_tensor,initway,model);
+        const float* start = &result[0];
+        const float* end = &result[reso * reso * reso];
+        unsigned long long t = reso * reso * reso;
+        outputs[0] = factory.createArray<float>({1, t}, start, end);*/
+    }
+    void displayOnMATLAB(std::ostringstream& stream) {
+        // Pass stream content to MATLAB fprintf function
+        matlabPtr->feval(u"fprintf", 0,
+            std::vector<matlab::data::Array>({ factory.createScalar(stream.str()) }));
+        // Clear stream buffer
+        stream.str("");
+    }
+    void checkArguments(matlab::mex::ArgumentList outputs, matlab::mex::ArgumentList inputs) {
+        std::shared_ptr<matlab::engine::MATLABEngine> matlabPtr = getEngine();
+        matlab::data::ArrayFactory factory;
+
+        if (inputs.size() < 3 || inputs.size() > 5) {
+            matlabPtr->feval(u"error",
+                0, std::vector<matlab::data::Array>({ factory.createScalar("Two inputs required") }));
+        }
+
+        if (inputs[0].getNumberOfElements() != 1) {
+            matlabPtr->feval(u"error",
+                0, std::vector<matlab::data::Array>({ factory.createScalar("Input resolution must be a scalar") }));
+        }
+
+        if (inputs[0].getType() != matlab::data::ArrayType::DOUBLE) {
+            matlabPtr->feval(u"error",
+                0, std::vector<matlab::data::Array>({ factory.createScalar("Input resolution must be a integer") }));
+        }
+
+        if (inputs[1].getNumberOfElements() != 2) {
+            matlabPtr->feval(u"error",
+                0, std::vector<matlab::data::Array>({ factory.createScalar("Input heat ratios of black & white 2 materials") }));
+        }
+        if (inputs[1].getType() != matlab::data::ArrayType::DOUBLE ||
+            inputs[1].getType() == matlab::data::ArrayType::COMPLEX_DOUBLE) {
+            matlabPtr->feval(u"error",
+                0, std::vector<matlab::data::Array>({ factory.createScalar("Heat ratios be type double") }));
+        }
+
+        if (inputs[2].getNumberOfElements() != 6) {
+            matlabPtr->feval(u"error",
+                0, std::vector<matlab::data::Array>({ factory.createScalar("Aimed tensor [xx yy zz xy yz xz] is needed") }));
+        }
+        if (inputs[2].getType() != matlab::data::ArrayType::DOUBLE ||
+            inputs[2].getType() == matlab::data::ArrayType::COMPLEX_DOUBLE) {
+            matlabPtr->feval(u"error",
+                0, std::vector<matlab::data::Array>({ factory.createScalar("Aimed tensor be type double") }));
+        }
+        if (inputs.size() > 3) {
+            if (inputs[3].getNumberOfElements() != 1) {
+                matlabPtr->feval(u"error",
+                    0, std::vector<matlab::data::Array>({ factory.createScalar("Initway need to be a string use \"\" may help") }));
+            }
+            matlab::data::TypedArrayRef<matlab::data::MATLABString> inArrayRef1 = inputs[3][0];
+            auto tstring = std::string(inArrayRef1[0]);
+            std::vector<std::string> ienum = { "random", "randcenter", "noise", "manual", "interp", "rep_randcenter", "P", "G", "D", "IWP", "example" };
+            if (inputs[3].getType() != matlab::data::ArrayType::MATLAB_STRING || std::find(ienum.begin(), ienum.end(), tstring) == ienum.end()) {
+                matlabPtr->feval(u"error",
+                    0, std::vector<matlab::data::Array>({ factory.createScalar("Initway type error") }));
+            }
+        }
+        if (inputs.size() > 4) {
+            if (inputs[4].getNumberOfElements() != 1) {
+                matlabPtr->feval(u"error",
+                    0, std::vector<matlab::data::Array>({ factory.createScalar("Optimizer need to be a string use \"\" may help") }));
+            }
+            matlab::data::TypedArrayRef<matlab::data::MATLABString> inArrayRef1 = inputs[4][0];
+            auto tstring = std::string(inArrayRef1[0]);
+            std::vector<std::string> ienum = { "oc", "mma"};
+            if (inputs[4].getType() != matlab::data::ArrayType::MATLAB_STRING || std::find(ienum.begin(), ienum.end(), tstring) == ienum.end()) {
+                matlabPtr->feval(u"error",
+                    0, std::vector<matlab::data::Array>({ factory.createScalar("Optimizer type error") }));
+            }
+        }
+    }
+};

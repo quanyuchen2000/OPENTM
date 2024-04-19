@@ -220,8 +220,6 @@ __global__ void randTribase_sincos_kernel(TensorView<T> view, int n_period, floa
 
 template<typename T>
 void symmetrizeField(Tensor<T> field, cfg::Symmetry sym) {
-	if (!FLAGS_usesym)
-		return;
 	if (sym == cfg::Symmetry::reflect3) {
 		field.symmetrize(Reflection3);
 	} else if (sym == cfg::Symmetry::reflect6) {

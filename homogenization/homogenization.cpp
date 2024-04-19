@@ -8,7 +8,7 @@ extern void uploadTemplaceMatrix(const double* ke, float penal);
 extern void uploadTemplaceMatrix_H(const double* ke, float penal, const float* feMu, const float* disp);
 void uploadTemplateLameMatrix(const char* kelam72, const char* kemu72, float Lam, float Mu);
 
-std::string outpath = "C:/Users/zhangdi/Documents/temp/homo/";
+std::string outpath = "";
 
 namespace homo {
 	std::string getPath(const std::string& str) {
@@ -44,7 +44,7 @@ void homo::Homogenization_H::build(cfg::HomoConfig homconfig)
 	grid = mg_->getRootGrid();
 
 	//grid->test();
-	initTemplateMatrix_H(1.0/config.reso[0]/2, getMem(), config.heatRatio);
+	initTemplateMatrix_H(1.0/config.reso[0]/2, getMem(), 1.);
 	auto mtt = getFeMatrix();
 	float cst[24];
 	for (int i = 0; i < 8; i++) {

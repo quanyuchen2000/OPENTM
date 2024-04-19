@@ -6,6 +6,8 @@ project(homo3d)
 
 set(FETCHCONTENT_QUIET FALSE)
 
+set(ENV{http_proxy} "127.0.0.1:4780")
+set(ENV{https_proxy} "127.0.0.1:4780")
 message(STATUS "Using proxy : $ENV{HTTP_PROXY}")
 if(DEFINED ENV{CONDA_PREFIX})
 message("using conda environment, prefix = $ENV{CONDA_PREFIX}")
@@ -19,9 +21,15 @@ set (CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fpermissive")
 set(CMAKE_IGNORE_PATH "C:/vcppkg/vcpkg/installed/x64-windows/share/gflags")
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
+# set(ENV{PATH} "$ENV{CONDA_PREFIX}/Library/bin;$ENV{PATH}")
+if(WIN32)
+    # add_compile_options(homo3d "/bigobj")
+endif()
 
 # disable all warning for clean output
-add_definitions(-w)
+if(UNIX)
+    add_definitions(-w)
+endif()
 
 include(FetchContent)
 # Fetch OpenVDB 8.2
@@ -48,7 +56,6 @@ message(STATUS "glm dir = ${GLM_INCLUDE_DIRS}")
 # add_library(glm::glm ALIAS glm)
 # endif()
 find_package(IlmBase REQUIRED)
-
 
 include_directories(${EIGEN3_INCLUDE_DIRS})
 include_directories(${CMAKE_SOURCE_DIR})
@@ -131,6 +138,7 @@ file(GLOB cppfiles
         voxelIO/*.cpp
     )
 # file(GLOB cppfiles *.cpp)
+
 add_executable(homo3d ${cppfiles})
 target_include_directories(homo3d PUBLIC ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
 set_target_properties(homo3d PROPERTIES CUDA_ARCHITECTURES "61;75;86")

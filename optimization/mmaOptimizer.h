@@ -33,7 +33,6 @@ namespace homo {
 
 		void update(int itn, float* x, float* dfdx, float* gval, float** dgdx);
 	};
-
 }
 #include "MMAContext.h"
 
