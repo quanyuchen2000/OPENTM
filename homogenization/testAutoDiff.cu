@@ -75,7 +75,7 @@ void test_MMA(cfg::HomoConfig config, int mode) {
 		auto rhop_H = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3);
 		heat_tensor_t <float, decltype(rhop_H)> Hh(hom_H, rhop_H);
 		auto objective1 = (Hh(0, 0) - 0.5).pow(2) + (Hh(1, 1) - 0.3).pow(2) + (Hh(2, 2) - 0.4).pow(2) - 0.0001;
-		for (int itn = 0; itn < 200; itn++) {
+		for (int itn = 0; itn < 500; itn++) {
 			//clock_t start = clock();
 			float f0val = objective1.eval();
 			objective1.backward(1);
@@ -83,7 +83,7 @@ void test_MMA(cfg::HomoConfig config, int mode) {
 			auto dfdx = rho_H.diff().flatten();
 			//dfdx.toMatlab("dfdx");
 			gv::gVector<float> dvdx(ne);
-			dvdx.set(1);
+			dvdx.set(1.0/reso/reso/reso);
 			gv::gVector<float> gval(1);
 			float* dgdx = dvdx.data();
 			float curVol = gv::gVectorMap(rhoArray.data(), ne).sum();
@@ -92,7 +92,7 @@ void test_MMA(cfg::HomoConfig config, int mode) {
 			printf("\033[32m \n* Iter %d  obj = %.4e  vol = %4.2f%%\033[0m\n", itn, f0val + 0.0001, curVol / ne * 100);
 			//rhoArray.toMatlab("dfdx");
 			float* dfdx_s = dfdx.data();
-			MMAOptimizer mma(1, ne, 1, 0, 1e8, 1);
+			MMAOptimizer mma(1, ne, 1, 0, 1e5, 1);
 			mma.setBound(0.001, 1);
 			//mma.update(itn, rhoArray.data(), dfdx.data(), gval.data(), &dgdx);
 			mma.update(itn, rhoArray.data(), dgdx, gval.data(), &dfdx_s);
@@ -107,13 +107,17 @@ void test_MMA(cfg::HomoConfig config, int mode) {
 		auto tg = config.target_tensor;
 		var_tsexp_t<> rho_H(reso, reso, reso);
 		initDensity(rho_H, config);
-		auto rhop_H = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3);
+		// auto rhop_H0 = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3);
+		auto rhop_H = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3) * (config.heatRatio[0] - config.heatRatio[1]) + config.heatRatio[1];
+		std::vector<float> transo(128 * 128 * 128, 0);
+		auto different = rhop_H;
+		different.eval().toHost(transo);
 		// auto rhop_H = rho_H.pow(3);
 		Homogenization_H hom_H(config);
 		hom_H.ConfigDiagPrecondition(0);
 		heat_tensor_t <float, decltype(rhop_H)> Hh(hom_H, rhop_H);
 		auto objective1 = (Hh(0, 0) - tg[0]).pow(2) + (Hh(1, 1) - tg[1]).pow(2) + (Hh(2, 2) - tg[2]).pow(2) + 
-			(Hh(1, 0) - tg[3]).pow(2) + (Hh(1, 2) - tg[4]).pow(2) + (Hh(2, 0) - tg[5]).pow(2) - 0.0001;
+			(Hh(1, 0) - tg[3]).pow(2) + (Hh(1, 2) - tg[4]).pow(2) + (Hh(2, 0) - tg[5]).pow(2);
 		OCOptimizer oc(ne, 0.001, 0.02, 0.5);
 		float volume_bound = 1.0;
 		float decrease = 0;
@@ -123,13 +127,15 @@ void test_MMA(cfg::HomoConfig config, int mode) {
 		for (int itn = 0; itn < 500; itn++) {
 			float val = objective1.eval();
 			printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, volume_bound);
-			if (val + 0.0001 < 1e-4 || (itn + 1)%50 == 0) {
+			// 
+			if (val < 1e-4 || (itn + 1)%50 == 0) {
 				float num_bound = rhop_H.sum().eval_imp()/pow(reso, 3);
 				decrease = volume_bound - num_bound;
 				volume_bound = volume_bound - decrease * decrease_factor;
 				decrease_factor *= 0.8;
 			}
-			if (val_last - val < 1e-4 && val + 0.0001 > 1e-4) {
+			// progress little & number big & reach bound
+			if (val_last - val < 1e-4 && val > 1e-4 && volume_bound - rho_H.sum().eval_imp()/pow(reso,3) < 1e-2) {
 				count++;
 			}
 			else {
@@ -137,6 +143,7 @@ void test_MMA(cfg::HomoConfig config, int mode) {
 			}
 			if (count >= 5) {
 				volume_bound += 0.3 * decrease * decrease_factor;
+				count = 0;
 			}
 			objective1.backward(1);
 			auto sens = rho_H.diff().flatten();

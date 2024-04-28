@@ -33,6 +33,7 @@ TempBufferPlace::TempBufferPlace(TempBufferPlace&& place)
 
 TempBufferPlace::~TempBufferPlace(void) {
 	if (buffer) pool_[bufferid] = std::move(buffer);
+	cuda_error_check;
 }
 
 ManagedTempBlock::ManagedTempBlock(ManagedTempBlock&& other)
@@ -53,6 +54,7 @@ ManagedTempBlock::ManagedTempBlock(TempBufferPool& pool_, int startBlock_, int e
 }
 
 ManagedTempBlock::~ManagedTempBlock(void) {
+	cuda_error_check;
 	for (int i = startBlock; i < endBlock; i++) {
 		pool.blockPlace32[i] = false;
 	}

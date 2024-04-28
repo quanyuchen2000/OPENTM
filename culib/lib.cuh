@@ -93,7 +93,10 @@ namespace culib {
 		TempBuffer& operator=(const TempBuffer&) = delete;
 	public:
 		TempBuffer(size_t size, bool unify = false);
-		~TempBuffer(void) { cudaFree(pdata); }
+		~TempBuffer(void) { 
+			// cudaFree(pdata); 
+			cuda_error_check; 
+		}
 	};
 
 	struct TempBufferPlace {

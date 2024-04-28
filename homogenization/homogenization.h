@@ -18,18 +18,11 @@ namespace homo {
 		void update(float* rho = nullptr, int pitchT = -1);
 		void heatMatrix(double C[3][3]);
 		void heatMatrix(float C[3][3]);
-		//double heatMatrix(int i, int j);
-		//double heatMatrix(float* rho, int i, int j);
 		std::shared_ptr<Grid_H> grid;
 		std::unique_ptr<MG_H> mg_;
 		float power_penal = 1;
 		float diag_strength = 1e6;
-		//double youngs_modulus = 1e6;
-		//double poisson_ratio = 0.3;
-		//bool enable_managed_memory = true;
 		cfg::HomoConfig config;
-		float lamConst;
-		float muConst;
 		SymmetryType sym;
 
 		void ConfigDiagPrecondition(float strength);

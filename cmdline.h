@@ -10,7 +10,6 @@ namespace cfg {
 	enum class InitWay : uint8_t { random, randcenter, noise, manual, interp, rep_randcenter, P, G, D, IWP, example };
 	enum class Model : uint8_t { mma, oc };
 	struct HomoConfig {
-		Objective obj;
 		Symmetry sym;
 		InitWay winit;
 		Model model;

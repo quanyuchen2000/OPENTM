@@ -128,7 +128,7 @@ void initDensity(var_tsexp_t<>& rho, cfg::HomoConfig config) {
 	// the initway example is what we've done in matlab to compare and check
 	else if (config.winit == cfg::InitWay::example) {
 		rho.rvalue().setValue_H([=] __device__(int i, int j, int k) {
-			if (sqrt(pow(i - float(resox) / 2 + 0.5, 2) + pow(j - float(resoy) / 2 + 0.5, 2) + pow(k - float(resoz) / 2 + 0.5, 2)) < float(min(min(resox, resoy), resoz)) / 6.0)
+			if (sqrt(pow(i - float(resox) / 4 + 0.5, 2) + pow(j - float(resoy) / 4 + 0.5, 2) + pow(k - float(resoz) / 4 + 0.5, 2)) < float(min(min(resox, resoy), resoz)) / 6.0)
 			{
 				return 0.;
 			}
@@ -144,37 +144,44 @@ void initDensity(var_tsexp_t<>& rho, cfg::HomoConfig config) {
 	rho.value().clamp(0.1, 1);
 }
 
-std::vector<float> runCustom(cfg::HomoConfig config) {
+std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = nullptr) {
 	int reso = config.reso[0];
 	int ne = pow(reso, 3);
 	auto tt = config.target_tensor;
 	Homogenization_H hom_H(config);
 	hom_H.ConfigDiagPrecondition(0);
 	var_tsexp_t<> rho_H(reso, reso, reso);
-	initDensity(rho_H, config);
-	auto rhop_H = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3) * (config.heatRatio[1] - config.heatRatio[0]) + config.heatRatio[1];
+	if (!rho0) {
+		initDensity(rho_H, config);
+	}
+	else {
+		rho_H.value().fromHost(rho0[0]);
+	}
+	auto rhop_H = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3) * (config.heatRatio[0] - config.heatRatio[1]) + config.heatRatio[1];
 	heat_tensor_t <float, decltype(rhop_H)> Hh(hom_H, rhop_H);
-	auto objective1 = (Hh(0, 0) - tt[0]).pow(2) + (Hh(1, 1) - tt[1]).pow(2) +
+	auto objective = (Hh(0, 0) - tt[0]).pow(2) + (Hh(1, 1) - tt[1]).pow(2) +
 		(Hh(2, 2) - tt[2]).pow(2) + (Hh(0, 1) - tt[3]).pow(2) +
-		(Hh(2, 1) - tt[4]).pow(2) + (Hh(0, 2) - tt[5]).pow(2) - 0.0001;
+		(Hh(2, 1) - tt[4]).pow(2) + (Hh(0, 2) - tt[5]).pow(2) - 1e-4;
+	ConvergeChecker criteria(config.finthres);
 	if (config.model == cfg::Model::mma) {
+		MMAOptimizer mma(1, ne, 1, 0, 1e8, 1);
+		mma.setBound(0.0001, 1);
 		for (int itn = 0; itn < config.max_iter; itn++) {
 			//clock_t start = clock();
-			float f0val = objective1.eval();
-			objective1.backward(1);
+			float f0val = objective.eval();
+			objective.backward(1);
+			if (criteria.is_converge(itn, f0val)) { printf("converged\n"); break; }
 			auto rhoArray = rho_H.value().flatten();
 			auto dfdx = rho_H.diff().flatten();
 			//dfdx.toMatlab("dfdx");
 			gv::gVector<float> dvdx(ne);
-			dvdx.set(1);
-			gv::gVector<float> gval(1);
+			dvdx.set(1.0);
+			gv::gVector<float> gval(1.0);
 			float* dgdx = dvdx.data();
 			float curVol = gv::gVectorMap(rhoArray.data(), ne).sum();
 			gval[0] = f0val;
 			printf("\033[32m \n* Iter %d  obj = %.4e  vol = %4.2f%%\033[0m\n", itn, f0val + 0.0001, curVol / ne * 100);
 			float* dfdx_s = dfdx.data();
-			MMAOptimizer mma(1, ne, 1, 0, 1e8, 1);
-			mma.setBound(0.001, 1);
 			//mma.update(itn, rhoArray.data(), dfdx.data(), gval.data(), &dgdx);
 			mma.update(itn, rhoArray.data(), dgdx, gval.data(), &dfdx_s);
 			rho_H.rvalue().graft(rhoArray.data());
@@ -189,15 +196,21 @@ std::vector<float> runCustom(cfg::HomoConfig config) {
 		float val_last = 1;
 		int count = 0;
 		for (int itn = 0; itn < config.max_iter; itn++) {
-			float val = objective1.eval();
+			float val = objective.eval();
 			printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, volume_bound);
 			if (val + 0.0001 < 1e-4 || (itn + 1) % 50 == 0) {
 				float num_bound = rhop_H.sum().eval_imp() / pow(reso, 3);
 				decrease = volume_bound - num_bound;
 				volume_bound = volume_bound - decrease * decrease_factor;
-				decrease_factor *= 0.8;
+				if (decrease_factor > 0.2)
+					decrease_factor *= 0.8;
+				else {
+					printf("converged\n"); break;
+				}
+				count = 0;
 			}
-			if (val_last - val < 1e-4 && val + 0.0001 > 1e-4) {
+			// progress little & number big & reach bound
+			if (val_last - val < 1e-4 && val > 1e-4 && abs(volume_bound - rho_H.sum().eval_imp() / pow(reso, 3)) < 1e-2) {
 				count++;
 			}
 			else {
@@ -205,8 +218,11 @@ std::vector<float> runCustom(cfg::HomoConfig config) {
 			}
 			if (count >= 5) {
 				volume_bound += 0.3 * decrease * decrease_factor;
+				// reset counter
+				count = 0;
 			}
-			objective1.backward(1);
+			objective.backward(1);
+			if (criteria.is_converge(itn, val) && decrease*decrease_factor < 1e-4) { printf("converged\n"); break; }
 			auto sens = rho_H.diff().flatten();
 			auto rhoarray = rho_H.value().flatten();
 			int ereso[3] = { reso,reso,reso };
@@ -217,9 +233,9 @@ std::vector<float> runCustom(cfg::HomoConfig config) {
 		}
 		hom_H.grid->writeDensity(getPath("density"), VoxelIOFormat::openVDB);
 	}
-	std::vector<float> rho;
-	hom_H.grid->getDensity(rho);
+	std::vector<float> rho(reso * reso * reso);
+	rho_H.eval().toHost(rho);
+	cuda_error_check;
 	return rho;
 }
-
 

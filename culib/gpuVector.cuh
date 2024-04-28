@@ -731,7 +731,7 @@ namespace gv {
 		}
 
 		virtual ~gVector(void) {
-			//cuda_error_check;
+			cuda_error_check;
 			if (_data != nullptr) { cudaFree(_data); }
 			cuda_error_check;
 		}
@@ -1071,6 +1071,7 @@ namespace gv {
 
 		~gVectorMap(void) override {
 			// Yeah, it's not elegant but works
+			cuda_error_check;
 			Base::_Get_data() = nullptr;
 			Base::_Get_size() = 0;
 		}
