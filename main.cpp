@@ -66,8 +66,8 @@ std::vector<float> runInstance(int reso, std::vector<double> heat_ratios, std::v
 
 int main()
 {
-	cfg::HomoConfig config;
-	config.init();
+	//cfg::HomoConfig config;
+	//config.init();
 
 	//std::cout << "Hello World!\n";
 	//cuda_test();
@@ -75,7 +75,7 @@ int main()
 	//try {
 	//	//testHomogenization(config);
 	//	//runInstance(config);
-	test_MMA(config, 2);
+	//test_MMA(config, 2);
 	//}
 	//catch (std::runtime_error e) {
 	//	std::cout << "\033[31m" << "Exception occurred: " << std::endl << e.what() << std::endl << ", aborting..." << "\033[0m" << std::endl;
@@ -85,7 +85,7 @@ int main()
 	//	std::cout << "\033[31m" << "Unhandled Exception occurred, aborting..." << "\033[0m" << std::endl;
 	//	exit(-1);
 	//}
-	runInstance(128, { 1e-5, 1 }, { 0.3,0.2,0.1,0.,0.,0. }, cfg::InitWay::IWP, cfg::Model::oc);
+	runInstance(128, { 1, 1e-4 }, { 0.3,0.2,0.1,0.1,0.05,0.05 }, cfg::InitWay::IWP, cfg::Model::oc);
 	return 0;
 }
 

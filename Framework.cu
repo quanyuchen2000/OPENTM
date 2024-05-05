@@ -190,46 +190,24 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 	}
 	else if (config.model == cfg::Model::oc) {
 		OCOptimizer oc(ne, 0.001, 0.02, 0.5);
-		float volume_bound = 1.0;
-		float decrease = 0;
-		float decrease_factor = 1.;
-		float val_last = 1;
-		int count = 0;
+		VolumeGovernor governor;
 		for (int itn = 0; itn < config.max_iter; itn++) {
 			float val = objective.eval();
-			printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, volume_bound);
-			if (val + 0.0001 < 1e-4 || (itn + 1) % 50 == 0) {
-				float num_bound = rhop_H.sum().eval_imp() / pow(reso, 3);
-				decrease = volume_bound - num_bound;
-				volume_bound = volume_bound - decrease * decrease_factor;
-				if (decrease_factor > 0.2)
-					decrease_factor *= 0.8;
-				else {
-					printf("converged\n"); break;
-				}
-				count = 0;
-			}
-			// progress little & number big & reach bound
-			if (val_last - val < 1e-4 && val > 1e-4 && abs(volume_bound - rho_H.sum().eval_imp() / pow(reso, 3)) < 1e-2) {
-				count++;
-			}
-			else {
-				count = 0;
-			}
-			if (count >= 5) {
-				volume_bound += 0.3 * decrease * decrease_factor;
-				// reset counter
-				count = 0;
+			printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, governor.get_volume_bound());
+			float lowerBound = rhop_H.sum().eval_imp() / pow(reso, 3);
+			float volfrac = rho_H.sum().eval_imp() / pow(reso, 3);
+			auto it = governor.volume_check(val, lowerBound, volfrac, itn);
+			if (it) {
+				printf("converged"); break;
 			}
 			objective.backward(1);
-			if (criteria.is_converge(itn, val) && decrease*decrease_factor < 1e-4) { printf("converged\n"); break; }
+			if (criteria.is_converge(itn, val) && governor.get_current_decrease() < 1e-4) { printf("converged\n"); break; }
 			auto sens = rho_H.diff().flatten();
 			auto rhoarray = rho_H.value().flatten();
 			int ereso[3] = { reso,reso,reso };
 			oc.filterSens(sens.data(), rhoarray.data(), reso, ereso);
-			oc.update(sens.data(), rhoarray.data(), volume_bound);
+			oc.update(sens.data(), rhoarray.data(), governor.get_volume_bound());
 			rho_H.value().graft(rhoarray.data());
-			val_last = val;
 		}
 		hom_H.grid->writeDensity(getPath("density"), VoxelIOFormat::openVDB);
 	}

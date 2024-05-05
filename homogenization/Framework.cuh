@@ -340,6 +340,71 @@ public:
 	}
 };
 
+struct VolumeGovernor {
+private:
+	float lowBound;
+	float volume_bound = 1.0;
+	float decrease = 0;
+	float decrease_factor = 1.;
+	float val_last = 1;
+	float vibrate = 0;
+	int vibrate_count = 0;
+	int count = 0;
+	void shrink() {
+		decrease = volume_bound - lowBound;
+		volume_bound = volume_bound - decrease_factor * decrease;
+		if (decrease_factor > 0.05)
+			decrease_factor *= 0.8;
+	}
+	void expand() {
+		volume_bound += 0.3 * decrease * decrease_factor;
+	}
+public:
+	float get_volume_bound() {
+		return volume_bound;
+	}
+	int volume_check(float value, float _lowBound, float volfrac, int itn) {
+		lowBound = _lowBound;
+		if (value + 0.0001 < 1e-4 || (itn + 1) % 100 == 0) {
+			shrink();
+			if (decrease_factor <= 0.05)
+				return 1;
+			count = 0;
+		}
+		bool reach = abs(volume_bound - volfrac) < 1e-2;
+		if (vibrate * (val_last - value) < 0)
+			vibrate_count++;
+		else
+			vibrate_count = 0;
+		if (vibrate_count >= 4) {
+			if (reach) {
+				expand();
+				vibrate_count = 0;
+			}
+			else {
+				shrink();
+			}
+		}
+		vibrate = val_last - value;
+		// progress little & number big & reach bound
+		if (val_last - value < 1e-4 && value > 1e-4 && reach) {
+			count++;
+		}
+		else {
+			count = 0;
+		}
+		if (count >= 5) {
+			volume_bound += 0.3 * decrease * decrease_factor;
+			// reset counter
+			count = 0;
+		}
+		val_last = value;
+		return 0;
+	};
+	float get_current_decrease() {
+		return decrease_factor * decrease;
+	}
+};
 
 void initDensity(var_tsexp_t<>& rho, cfg::HomoConfig config);
 
