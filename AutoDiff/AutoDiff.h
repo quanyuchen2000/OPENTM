@@ -55,6 +55,7 @@ namespace homo {
 	template<typename opExp_t, typename Scalar> struct ln_exp_t;
 	template<typename opExp_t, typename Scalar> struct exp_exp_t;
 	template<typename opExp_t, typename Scalar> struct sgm_exp_t;
+	template<typename opExp_t, typename Scalar> struct abs_exp_t;
 	template<typename Scalar = float> struct scalar_exp_t;
 	template<typename subVar = void, typename Scalar = float> struct var_exp_t;
 	template<typename Scalar> struct rvar_exp_t;
@@ -529,6 +530,10 @@ namespace homo {
 		__host_device_func auto sgm(Scalar s, Scalar c) {
 			return sgm_exp_t<subExp_t, Scalar>(static_cast<subExp_t *>(this)->template refer<>(), s, c);
 		}
+
+		__host_device_func auto abs(void) {
+			return abs_exp_t<subExp_t, Scalar>(static_cast<subExp_t*>(this)->template refer<>());
+		}
 	};
 
 	template<typename subExp_t, typename Scalar = float, bool HasStorage = true, bool HasFlag = false>
@@ -739,6 +744,26 @@ namespace homo {
 		__host_device_func Scalar eval_imp(void) { return pow_(Base::op.eval(), expo); }
 		__host_device_func void backward_imp(Scalar lastdiff) {
 			Base::op.backward(lastdiff * expo * pow_(Base::op.value(), expo - 1));
+		}
+	};
+
+	template<typename opExp_t, typename Scalar>
+	struct abs_exp_t
+		: public unary_exp_t<abs_exp_t, opExp_t, Scalar> {
+		using Base = unary_exp_t<abs_exp_t, opExp_t, Scalar>;
+		__host_device_func abs_exp_t(const opExp_t& op)
+			: Base(op) {}
+		__host_device_func Scalar eval_imp(void) { return std::abs(Base::op.eval()); }
+		__host_device_func void backward_imp(Scalar lastdiff) {
+			if (Base::op.value() > 0) {
+				Base::op.backward(lastdiff);
+			}
+			else if (Base::op.value() < 0) {
+				Base::op.backward(-lastdiff);
+			}
+			else {
+				Base::op.backward(0);
+			}
 		}
 	};
 

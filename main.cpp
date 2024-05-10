@@ -6,6 +6,7 @@
 #include "openvdb/tools/VolumeToMesh.h"
 #include "voxelIO/openvdb_wrapper_t.h"
 #include <fstream>
+#include <sstream>
 #include <algorithm>
 // include files for write things in main
 
@@ -85,7 +86,7 @@ int main()
 	//	std::cout << "\033[31m" << "Unhandled Exception occurred, aborting..." << "\033[0m" << std::endl;
 	//	exit(-1);
 	//}
-	runInstance(128, { 1, 1e-4 }, { 0.3,0.2,0.1,0.1,0.05,0.05 }, cfg::InitWay::IWP, cfg::Model::oc);
+	runInstance(128, {1, 1e-4}, {0.3,0.2,0.1,0.05,0.05,0.05}, cfg::InitWay::IWP, cfg::Model::oc);
 	return 0;
 }
 

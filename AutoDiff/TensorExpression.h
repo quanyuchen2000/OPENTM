@@ -242,7 +242,8 @@ namespace homo {
 	enum TensorSym {
 		Reflection3,
 		Reflection6,
-		Rotate3
+		Rotate3,
+		Rotate2
 	};
 
 	template<typename T>
@@ -456,6 +457,9 @@ namespace homo {
 			else if (symtype == Rotate3) {
 				int res[3] = { myview.size(0) / 2, myview.size(1) / 2, myview.size(2) / 2 };
 				nrep = res[2] * (res[2] + 1) * (2 * res[2] + 1) / 6;
+			}
+			else if (symtype == Rotate2) {
+				nrep = (myview.size(0) / 2) * myview.size(1) * myview.size(2);
 			}
 			size_t grid_size, block_size;
 			make_kernel_param(&grid_size, &block_size, nrep, 256);

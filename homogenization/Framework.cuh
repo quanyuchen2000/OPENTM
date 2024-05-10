@@ -226,6 +226,8 @@ void symmetrizeField(Tensor<T> field, cfg::Symmetry sym) {
 		field.symmetrize(Reflection6);
 	} else if (sym == cfg::Symmetry::rotate3) {
 		field.symmetrize(Rotate3);
+	} else if (sym == cfg::Symmetry::rotate2) {
+		field.symmetrize(Rotate2);
 	} else if (sym == cfg::Symmetry::NONE) {
 	} else {
 		printf("\033[31m unsupported symmetry\033[0m\n");
@@ -365,18 +367,20 @@ public:
 	}
 	int volume_check(float value, float _lowBound, float volfrac, int itn) {
 		lowBound = _lowBound;
-		if (value + 0.0001 < 1e-4 || (itn + 1) % 100 == 0) {
+		// enough small or give a start power
+		if (value + 0.0001 < 1e-4 || itn == 100) {
 			shrink();
 			if (decrease_factor <= 0.05)
 				return 1;
 			count = 0;
 		}
 		bool reach = abs(volume_bound - volfrac) < 1e-2;
+		// anti vibration
 		if (vibrate * (val_last - value) < 0)
 			vibrate_count++;
 		else
 			vibrate_count = 0;
-		if (vibrate_count >= 4) {
+		if (vibrate_count >= 8) {
 			if (reach) {
 				expand();
 				vibrate_count = 0;

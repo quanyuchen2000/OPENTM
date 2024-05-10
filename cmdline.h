@@ -6,7 +6,7 @@
 
 namespace cfg {
 	enum class Objective : uint8_t { bulk, shear, npr, custom };
-	enum class Symmetry : uint8_t { reflect3, reflect6, rotate3, NONE };
+	enum class Symmetry : uint8_t { reflect3, reflect6, rotate3, rotate2, NONE };
 	enum class InitWay : uint8_t { random, randcenter, noise, manual, interp, rep_randcenter, P, G, D, IWP, example };
 	enum class Model : uint8_t { mma, oc };
 	struct HomoConfig {

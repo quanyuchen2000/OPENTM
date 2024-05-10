@@ -18,7 +18,7 @@ void cfg::HomoConfig::init()
 	logobj = 0;
 	testname = "none";
 	useManagedMemory = true;
-	inputrho = "";
+	inputrho = "init rand";
 	max_iter = 500;
 	initperiod = 10;
 	finthres = 5e-4; // threshold of change ratio used for objective convergence check

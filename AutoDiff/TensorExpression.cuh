@@ -174,7 +174,8 @@ namespace homo {
 				// [b, c, a]
 				acc(orbit[1], orbit[2], orbit[0]) = orbitSum;
 			}
-		} else if (sym == Rotate3) {
+		} 
+		else if (sym == Rotate3) {
 			int repReso[3] = { acc.size(0) / 2, acc.size(1) / 2, acc.size(2) / 2 };
 			int repPos[3];
 			// z > y, x
@@ -258,6 +259,22 @@ namespace homo {
 				}
 			}
 #endif
+		}
+		else if (sym == Rotate2) {
+			int repReso[3] = { acc.size(0) / 2, acc.size(1), acc.size(2) };
+			int repPos[3] = {
+				tid % repReso[0],
+				tid / repReso[0] % repReso[1],
+				tid / (repReso[0] * repReso[1])
+			};
+			if (repPos[2] >= repReso[2]) return;
+			auto val = acc(repPos[0], repPos[1], repPos[2]);
+			if (average) {
+				val += acc(acc.size(0) - 1 - repPos[0], acc.size(1) - 1 - repPos[1], acc.size(2) - 1 - repPos[2]);
+				val /= 2;
+			}
+			acc(repPos[0], repPos[1], repPos[2]) = val;
+			acc(acc.size(0) - 1 - repPos[0], acc.size(1) - 1 - repPos[1], acc.size(2) - 1 - repPos[2]) = val;
 		}
 	}
 
