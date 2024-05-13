@@ -1,7 +1,4 @@
-﻿// homo3d.cpp : 此文件包含 "main" 函数。程序执行将在此处开始并结束。
-//
-// if you are sure
-#include <iostream>
+﻿#include <iostream>
 #include "cmdline.h"
 #include "openvdb/tools/VolumeToMesh.h"
 #include "voxelIO/openvdb_wrapper_t.h"
@@ -9,7 +6,6 @@
 #include <sstream>
 #include <algorithm>
 // include files for write things in main
-
 extern void cuda_test(void);
 extern void testAutoDiff(void);
 extern void test_MMA(cfg::HomoConfig, int mode);
@@ -86,41 +82,41 @@ int main()
 	//	std::cout << "\033[31m" << "Unhandled Exception occurred, aborting..." << "\033[0m" << std::endl;
 	//	exit(-1);
 	//}
-	runInstance(128, {1, 1e-4}, {0.3,0.2,0.1,0.05,0.05,0.05}, cfg::InitWay::IWP, cfg::Model::oc);
+	runInstance(128, { 1, 1e-4 }, { 0.3,0.2,0.1,0.1,0.05,0.05 }, cfg::InitWay::IWP, cfg::Model::oc);
 	return 0;
 }
 
 /* below is the code for user to bind python .pyd file*/
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-namespace py = pybind11;
-PYBIND11_MODULE(homo3d, m) {
-	m.doc() = "....";
-	py::enum_<cfg::InitWay>(m, "InitWay")
-		.value("random", cfg::InitWay::random)
-		.value("randcenter", cfg::InitWay::randcenter)
-		.value("noise", cfg::InitWay::noise)
-		.value("manual", cfg::InitWay::manual)
-		.value("interp", cfg::InitWay::interp)
-		.value("rep_randcenter", cfg::InitWay::rep_randcenter)
-		.value("P", cfg::InitWay::P)
-		.value("G", cfg::InitWay::G)
-		.value("D", cfg::InitWay::D)
-		.value("IWP", cfg::InitWay::IWP)
-		.value("example", cfg::InitWay::example);
-
-	py::enum_<cfg::Model>(m, "Model")
-		.value("mma", cfg::Model::mma)
-		.value("oc", cfg::Model::oc);
-	m.def("runInstance", &runInstance, py::arg("reso"), py::arg("heat_ratios"), py::arg("target_ratio"),
-		py::arg("initway") = cfg::InitWay::IWP, py::arg("model") = cfg::Model::mma);
-
-	py::class_<wrapper_homo>(m, "homo")
-		.def(py::init<>())
-		.def("setDensity", &wrapper_homo::setDensity, "set density by given rho")
-		.def("setConfig", &wrapper_homo::setConfig, py::arg("reso"), py::arg("heat_ratios"), py::arg("target_ratio"), py::arg("model") = cfg::Model::oc)
-		.def("optimize", &wrapper_homo::optimize, "optimization");
-}
+//#include <pybind11/pybind11.h>
+//#include <pybind11/stl.h>
+//namespace py = pybind11;
+//PYBIND11_MODULE(homo3d, m) {
+//	m.doc() = "....";
+//	py::enum_<cfg::InitWay>(m, "InitWay")
+//		.value("random", cfg::InitWay::random)
+//		.value("randcenter", cfg::InitWay::randcenter)
+//		.value("noise", cfg::InitWay::noise)
+//		.value("manual", cfg::InitWay::manual)
+//		.value("interp", cfg::InitWay::interp)
+//		.value("rep_randcenter", cfg::InitWay::rep_randcenter)
+//		.value("P", cfg::InitWay::P)
+//		.value("G", cfg::InitWay::G)
+//		.value("D", cfg::InitWay::D)
+//		.value("IWP", cfg::InitWay::IWP)
+//		.value("example", cfg::InitWay::example);
+//
+//	py::enum_<cfg::Model>(m, "Model")
+//		.value("mma", cfg::Model::mma)
+//		.value("oc", cfg::Model::oc);
+//	m.def("runInstance", &runInstance, py::arg("reso"), py::arg("heat_ratios"), py::arg("target_ratio"),
+//		py::arg("initway") = cfg::InitWay::IWP, py::arg("model") = cfg::Model::mma);
+//
+//	py::class_<wrapper_homo>(m, "homo")
+//		.def(py::init<>())
+//		.def("setDensity", &wrapper_homo::setDensity, "set density by given rho")
+//		.def("setConfig", &wrapper_homo::setConfig, py::arg("reso"), py::arg("heat_ratios"), py::arg("target_ratio"), py::arg("model") = cfg::Model::oc)
+//		.def("optimize", &wrapper_homo::optimize, "optimization");
+//}
 
 ///* below is the code for user to build matlab .mex64w file*/
 //#include "mex.hpp"

@@ -211,12 +211,12 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			float val = objective.eval();
 			final_val = val;
 			printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, governor.get_volume_bound());
-			//printf("%f %f %f %f %f %f", Hh.H_[0][0], Hh.H_[1][1], Hh.H_[2][2], Hh.H_[0][1], Hh.H_[1][2], Hh.H_[0][2]);
+			printf("%f %f %f %f %f %f", Hh.H_[0][0], Hh.H_[1][1], Hh.H_[2][2], Hh.H_[0][1], Hh.H_[1][2], Hh.H_[0][2]);
 			float lowerBound = rhop_H.sum().eval_imp() / pow(reso, 3);
 			float volfrac = rho_H.sum().eval_imp() / pow(reso, 3);
 			auto it = governor.volume_check(val, lowerBound, volfrac, itn);
 			if (it) {
-				printf("converged"); break;
+				//printf("converged"); break;
 			}
 			objective.backward(1);
 			if (criteria.is_converge(itn, val) && governor.get_current_decrease() < 1e-4) { printf("converged\n"); break; }

@@ -67,7 +67,6 @@ namespace homo {
 		acc(id[0], id[1], id[2]) = pos[axis];
 		//printf("[range] %e\n", pos[axis]);
 	}
-
 	template<typename Acc>
 	__global__ void symetrize_tensor_kernel(Acc acc_, TensorSym sym, bool average) {
 		size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
