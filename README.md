@@ -58,3 +58,9 @@ After the optimization finished, the optimized density field is stored in `<pref
 You need to add the pybind11 and anaconda support to compile the uncommented code in main function. 
 
 See the video as example.
+We have changed our project name from homo3d to openTM. Use 
+```python
+import openTM
+help(openTM)
+```
+instead.
