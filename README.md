@@ -20,7 +20,7 @@ conda env create -f environment.yml
 Then you activate it by:
 
 ```bash
-conda activate homo3d
+conda activate openTM
 ```
 ##### Tips
 
