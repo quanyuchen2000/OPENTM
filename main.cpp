@@ -90,7 +90,7 @@ int main()
 //#include <pybind11/pybind11.h>
 //#include <pybind11/stl.h>
 //namespace py = pybind11;
-//PYBIND11_MODULE(homo3d, m) {
+//PYBIND11_MODULE(openTM, m) {
 //	m.doc() = "....";
 //	py::enum_<cfg::InitWay>(m, "InitWay")
 //		.value("random", cfg::InitWay::random)

@@ -1,4 +1,4 @@
-name: homo3d
+name: openTM
 channels:
   - conda-forge
   - defaults
