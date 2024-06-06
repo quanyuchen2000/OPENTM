@@ -200,7 +200,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			ofs << elapsed_time << " " << f0val << "\n";
 		}
 		ofs.close();
-		hom_H.grid->writeDensity(getPath("density_mma"), VoxelIOFormat::openVDB);
+		rho_H.value().toVdb(getPath("density_mma"));
 	}
 	else if (config.model == cfg::Model::oc) {
 		OCOptimizer oc(ne, 0.001, 0.02, 0.5);
@@ -232,7 +232,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 		clock_t end = clock();
 		double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
 		ofs << elapsed_time << "\n";
-		hom_H.grid->writeDensity(getPath("density"+std::to_string(reso)), VoxelIOFormat::openVDB);
+		rho_H.value().toVdb(getPath("density" + std::to_string(reso)));
 		ofs.close();
 	}
 	std::vector<float> rho(reso * reso * reso);
