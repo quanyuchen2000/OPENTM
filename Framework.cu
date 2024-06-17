@@ -238,6 +238,8 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 	std::vector<float> rho(reso * reso * reso);
 	rho_H.eval().toHost(rho);
 	cuda_error_check;
+        freeMem();
+        cuda_error_check;
 	return rho;
 }
 
