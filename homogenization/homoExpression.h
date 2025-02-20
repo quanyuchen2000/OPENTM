@@ -148,8 +148,87 @@ namespace homo {
 			return &H_[0][0];
 		}
 	};
+	template<typename Scalar>
+	struct heat_tensor_host_t
+	{
+		Scalar H_[3][3];
+		Scalar gradH_[3][3];
+		std::vector<float> densityField;
+		std::vector<float> sensitiveField;
+		RefCounter counter;
+		Homogenization_H& domain_;
+		bool hold_on = false;
+		bool expired = true;
+		__host_device_func el_var_t<Scalar, heat_tensor_host_t> operator()(int i, int j) {
+			if (i < 0 || i >= 3 || j < 0 || j >= 3) {
+				//throw std::runtime_error("error elastic tensor index out of range");
+				printf("\031merror elastic tensor index out of range\033[0m\n");
+			}
+			//printf("el_proto = %p c%d%d = %p  dc%d%d = %p\n", this, i, j, &C_[i][j], i, j, &gradC_[i][j]);;
+			return el_var_t<Scalar, heat_tensor_host_t>(*this, H_[i][j], gradH_[i][j]);
+		}
+		void reset(void) { counter.reset(); }
+		void holdOn(void) { hold_on = true; }
+		void holdOff(void) { hold_on = false; }
+		__host_device_func void eval(void) {
+			counter.c_eval();
+			if (expired && !hold_on) {
+				for (int i = 0; i < 3; i++)
+					for (int j = 0; j < 3; j++)
+						gradH_[i][j] = 0;
+				domain_.update_Host(densityField);
+				domain_.heatMatrix(H_);
+				expired = false;
+			}
+			if (hold_on) {
+				for (int i = 0; i < 3; i++)
+					for (int j = 0; j < 3; j++)
+						gradH_[i][j] = 0;
+			}
+		}
+		__host_device_func void backward() {
+			counter.c_backward();
+			if (counter.finishedBackward() && (!expired || hold_on)) {
+				expired = true;
+				//data2matrix_h("dC", &gradC_[0][0], 6, 6);
+				counter.reset();
+				// do something
+				domain_.Sensitivity_host(gradH_, sensitiveField, true);
+				// densityField.backward(densityField.diff());
+				return;
+			}
+			else {
+				return;
+			}
+		}
+	public:
+		//friend struct HomoTraits;
+		heat_tensor_host_t(Homogenization_H& dom, std::vector<float>& rho)
+			: domain_(dom), densityField(rho), expired(true) {
+			//if (domain_.grid->getCellReso() != rho.getDim()) {
+			//	throw std::runtime_error("density variable does not match the homogenization domain");
+			//}
+		}
 
-	//struct HomoTraits {
-	//	Homogenization& domain;
-	//};
+		void writeTo(const std::string& filename) {
+			std::ofstream ofs(filename, std::ios::binary);
+			ofs.write((const char*)(&H_[0][0]), sizeof(H_));
+			ofs.close();
+		}
+
+		void writeToTxt(const std::string& filename) {
+			std::ofstream ofs(filename);
+			for (int i = 0; i < 3; i++) {
+				for (int j = 0; j < 3; j++) {
+					ofs << H_[i][j] << "  ";
+				}
+				ofs << "\n";
+			}
+			ofs.close();
+		}
+
+		const Scalar* data(void) {
+			return &H_[0][0];
+		}
+	};
 }

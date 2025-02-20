@@ -369,17 +369,84 @@ private:
 		if (decrease_factor > 0.1)
 			decrease_factor *= 0.8;
 	}
+	void shrink(float volfrac, float Hh[3][3], std::vector<float> &rho_H, float val, bool record = 1) {
+		decrease = volume_bound - lowBound;
+		printf("decrease:%f\n factor:%f\n", decrease, decrease_factor);
+
+		volume_bound = volume_bound - decrease_factor * decrease;
+		if (record || best_res > val) {
+			best_rho_h = rho_H;
+			for (int i = 0; i < 3; i++) {
+				for (int j = 0; j < 3; j++) {
+					hh[i][j] = Hh[i][j];
+				}
+			}
+			best_res = val;
+			best_vol = volfrac;
+		}
+		if (decrease_factor > 0.1)
+			decrease_factor *= 0.8;
+	}
 	void expand() {
 		volume_bound += 0.3 * decrease * decrease_factor;
 	}
 public:
 	Tensor<float> best_rho;
+	std::vector<float> best_rho_h;
 	float best_res = 100000;
 	float best_vol = 1;
 	float val_last = 1;
 	float hh[3][3];
 	float get_volume_bound() {
 		return volume_bound;
+	}
+	int volume_check(float value, float _lowBound, float volfrac, int itn, std::vector<float>& rho_H, float Hh[3][3]) {
+		lowBound = _lowBound;
+		// enough small or give a start power
+		if (value + 0.01 < 0.02) {
+			shrink(volfrac, Hh, rho_H, value);
+			if (decrease_factor <= 0.1)
+				return 1;
+			count = 0;
+		}
+		if (itn == 100 && decrease_factor == 1) {
+			shrink(volfrac, Hh, rho_H, value);
+		}
+		bool reach = abs(volume_bound - volfrac) < 1e-2;
+		// anti vibration
+		if (vibrate * (val_last - value) < 0)
+			vibrate_count++;
+		else
+			vibrate_count = 0;
+		if (vibrate_count >= 8) {
+			if (reach) {
+				expand();
+				vibrate_count = 0;
+				count = 0;
+			}
+			else {
+				shrink(volfrac, Hh, rho_H, value, false);
+				if (decrease_factor <= 0.1)
+					return 1;
+				vibrate_count = 0;
+				count = 0;
+			}
+		}
+		vibrate = val_last - value;
+		// progress little & number big & reach bound
+		if ((val_last - value) / abs(value + 0.02) < 0.01 && value > 0.01 && reach) {
+			count++;
+		}
+		else {
+			count = 0;
+		}
+		if (count >= 5) {
+			expand();
+			// reset counter
+			count = 0;
+		}
+		val_last = value;
+		return 0;
 	}
 	int volume_check(float value, float _lowBound, float volfrac, int itn, var_tsexp_t<> &rho_H, float Hh[3][3]) {
 		lowBound = _lowBound;

@@ -112,6 +112,8 @@ struct Grid_H {
 
 	bool assemb_otf = false;
 
+	bool use_host_memory = false;
+
 	// coarse from finer grid
 	std::array<int, 3> upCoarse = {};
 	// coarse to coarser grid
@@ -132,12 +134,10 @@ struct Grid_H {
 	VT* r_g[1];
 
 	// for used on host
-	VT* u_h[1];
-	VT* f_h[1];
-	VT* r_h[1];
-	VT* u_p[1];
-	VT* f_p[1];
-	VT* r_p[1];
+	std::vector<VT> u_h;
+	std::vector<VT> f_h;
+	std::vector<VT> r_h;
+	std::vector<VT> *rho_h;
 	//double* uchar_g[6][3];
 	//double* fchar_g[6][3];
 	// float* uchar_g[3];
@@ -216,6 +216,7 @@ struct Grid_H {
 	}
 
 	void update(float* rho, int pitchT = -1, bool lexiOrder = true);
+	void update(std::vector<float> &rho);
 
 	void buildRoot(int xreso, int yreso, int zreso, GridConfig config);
 

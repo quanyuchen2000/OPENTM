@@ -73,6 +73,10 @@ __global__ void restrict_stencil_otf_aos_kernel_1_H(
 	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags
 );
 template<typename T>
+__global__ void restrict_stencil_otf_aos_kernel_host_H(
+	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags, glm::hvec3 pos, int blocksize
+);
+template<typename T>
 __global__ void restrict_stencil_otf_aos_kernel_1(
 	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags
 );
@@ -131,8 +135,6 @@ void homo::Grid_H::useGrid_g(void)
 	cudaMemcpyToSymbol(gGsVertexReso, gsVertexReso, sizeof(gGsVertexReso));
 
 	if (is_root) {
-		// cudaMemcpyToSymbol(guchar, uchar_g, sizeof(guchar));
-		//cudaMemcpyToSymbol(gfchar, fchar_g, sizeof(gfchar));
 		cudaMemcpyToSymbol(gGsCellReso, gsCellReso, sizeof(gGsCellReso));
 	}
 }
@@ -1343,12 +1345,6 @@ void Grid_H::v_reset(VT* v, int len)
 	cudaMemset(v, 0, sizeof(VT) * len);
 	cudaDeviceSynchronize();
 }
-
-void Grid_H::v_reset_h(VT* v, int len)
-{
-	memset(v, 0, sizeof(VT) * len);
-}
-
 template<typename T>
 struct constVec {
 	T val;
@@ -1372,7 +1368,7 @@ struct constVec {
 void homo::Grid_H::restrict_stencil(void)
 { 
 	if (is_root) return;
-	if (fine->assemb_otf) {
+	if (fine->assemb_otf && !fine->use_host_memory) {
 		useGrid_g();
 		size_t grid_size, block_size;
 		for (int i = 0; i < 27; i++) {
@@ -1385,6 +1381,39 @@ void homo::Grid_H::restrict_stencil(void)
 		restrict_stencil_otf_aos_kernel_1_H << <grid_size, block_size >> > (nv, fine->rho_g, fine->cellflag, fine->vertflag);
 		cudaDeviceSynchronize();
 		cuda_error_check;
+		useGrid_g();
+		lexiStencil2gsorder();
+		enforce_period_stencil(true);
+	}
+	else if (fine->assemb_otf && fine->use_host_memory)
+	{
+		// give the true value to gpu vector
+		useGrid_g();
+
+		size_t grid_size, block_size;
+		for (int i = 0; i < 27; i++) {
+			cudaMemset(stencil_g[i], 0, sizeof(VT) * n_gsvertices());
+		}
+		cudaDeviceSynchronize();
+		cuda_error_check;
+		int nv = (cellReso[0] + 1) * (cellReso[1] + 1) * (cellReso[2] + 1);
+
+		int blockx, blocky, blockz;
+		blockx = fine->cellReso[0] / MIN_TRANSFER;
+		blocky = fine->cellReso[1] / MIN_TRANSFER;
+		blockz = fine->cellReso[2] / MIN_TRANSFER;
+		for (int i = 0; i < blockx * blocky * blockz; i++) {
+			int ix = i % blockx;
+			int iy = (i / blockx) % blocky;
+			int iz = i / (blockx * blocky);
+			// here we only need to give the blocked rho
+			// we need one thread one fine->cell
+			make_kernel_param(&grid_size, &block_size, nv, 256);
+			restrict_stencil_otf_aos_kernel_host_H << <grid_size, block_size >> > (nv, fine->rho_g, fine->cellflag, fine->vertflag, {ix, iy, iz}, MIN_TRANSFER);
+			cudaDeviceSynchronize();
+			cuda_error_check;
+		}
+		
 		useGrid_g();
 		lexiStencil2gsorder();
 		enforce_period_stencil(true);

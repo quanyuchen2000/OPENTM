@@ -16,6 +16,7 @@ namespace homo {
 		Homogenization_H(cfg::HomoConfig config);
 		void build(cfg::HomoConfig config);
 		void update(float* rho = nullptr, int pitchT = -1);
+		void update_Host(std::vector<float> &rho);
 		void heatMatrix(double C[3][3]);
 		void heatMatrix(float C[3][3]);
 		std::shared_ptr<Grid_H> grid;
@@ -27,6 +28,7 @@ namespace homo {
 
 		void ConfigDiagPrecondition(float strength);
 		void Sensitivity(float dC[3][3], float* sens, int pitchT, bool lexiOrder = false);
+		void Sensitivity_host(float dC[3][3], std::vector<float> &sens, bool lexiOrder = false);
 	private:
 		std::string getName(void);
 	};

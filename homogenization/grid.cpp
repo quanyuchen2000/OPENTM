@@ -233,21 +233,24 @@ std::pair<int, int> Grid_H::countGS_template(void)
 	return { nv,ne };
 }
 
+void Grid_H::v_reset_h(VT* v, int len)
+{
+	memset(v, 0, sizeof(VT) * len);
+}
+
 size_t Grid_H::allocateBuffer(int nv, int ne) 
 {
 	size_t total_gpu = 0;
 	size_t total_cpu = 0;
 	// judge whether to use host memory
-	bool useHostMemory = (cellReso[0] > MIN_TRANSFER);
-	if (useHostMemory){
+	bool use_host_memory = (cellReso[0] > MIN_TRANSFER);
+	if (use_host_memory){
 		int total_nv = (cellReso[0]/MIN_TRANSFER * cellReso[1]/MIN_TRANSFER * cellReso[2]/MIN_TRANSFER) * pow(MIN_TRANSFER+3, 3);
 		// the total data
-		u_h[0] = getMem().addBuffer(homoutils::formated("%s_u_%d", getName().c_str(), Pinned), total_nv * sizeof(VT))->data<VT>();
-		f_h[0] = getMem().addBuffer(homoutils::formated("%s_f_%d", getName().c_str(), Pinned), total_nv * sizeof(VT))->data<VT>();
+		u_h.resize(total_nv, 0);
+		f_h.resize(total_nv, 0);
 		// maybe r_h is not necessary?
-		r_h[0] = getMem().addBuffer(homoutils::formated("%s_r_%d", getName().c_str(), Hostheap), total_nv * sizeof(VT))->data<VT>();
-		memset(r_h[0], 0, sizeof(VT) * total_nv);
-		// reset_residual();
+		r_h.resize(total_nv, 0);
 		// the block used on device
 		u_g[0] = getMem().addBuffer(homoutils::formated("%s_u_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
 		f_g[0] = getMem().addBuffer(homoutils::formated("%s_f_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
@@ -269,7 +272,7 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 		}
 		total_gpu += nv * sizeof(VT) * 27;
 	}
-	if (!useHostMemory) {
+	if (!use_host_memory) {
 		if (gridConfig.enableManagedMem) {
 			for (int i = 0; i < 3; i++) {
 				// here we use useless memory should be cut off
@@ -293,13 +296,12 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	total_gpu += ne * sizeof(CellFlags);
 
 	if (is_root) {
-		if (!useHostMemory) {
+		if (!use_host_memory) {
 			total_gpu += ne * sizeof(float);
 			rho_g = getMem().addBuffer(homoutils::formated("%s_rho", getName().c_str()), ne * sizeof(float))->data<float>();
 		}
 		else {
-			total_gpu += pow(MIN_TRANSFER, 3) * sizeof(float);
-			rho_g = getMem().addBuffer(homoutils::formated("%s_rho", getName().c_str()), pow(MIN_TRANSFER, 3) * sizeof(float))->data<float>();
+			total_cpu += pow(MIN_TRANSFER, 3) * sizeof(float);
 		}
 	}
 
@@ -314,7 +316,9 @@ VT* homo::Grid_H::getDisplacement(void)
 	return u_g[0];
 }
 
-
+void homo::Grid_H::update(std::vector<float> &rho) {
+	rho_h = &rho;
+}
 double homo::Grid_H::residual(void)
 {
 	return v_norm(r_g[0]);
@@ -325,7 +329,7 @@ void Grid_H::useFchar(int k)
 	if (cellReso[0] > MIN_TRANSFER) {
 		// todo
 		enforce_unit_macro_strain_host(k);
-		pad_vertex_data_host(f_h);
+		// pad_vertex_data_host(f_h);
 	}
 	else {
 		enforce_unit_macro_strain(k);
@@ -341,8 +345,7 @@ void Grid_H::useFchar(int k)
 void Grid_H::reset_displacement(void)
 {
 	if (cellReso[0] > MIN_TRANSFER) {
-		int len = (cellReso[0] / MIN_TRANSFER * cellReso[1] / MIN_TRANSFER * cellReso[2] / MIN_TRANSFER)* pow(MIN_TRANSFER + 3, 3);
-		v_reset_h(u_h[0], len);
+		memset(u_h.data(), 0, u_h.size() * sizeof(VT));
 	}
 	else {
 		v_reset(u_g[0]);
@@ -352,8 +355,7 @@ void Grid_H::reset_displacement(void)
 void Grid_H::reset_residual(void)
 {
 	if (cellReso[0] > MIN_TRANSFER) {
-		int len = (cellReso[0] / MIN_TRANSFER * cellReso[1] / MIN_TRANSFER * cellReso[2] / MIN_TRANSFER) * pow(MIN_TRANSFER + 3, 3);
-		v_reset_h(r_h[0], len);
+		memset(r_h.data(), 0, r_h.size() * sizeof(VT));
 	}
 	else {
 		v_reset(r_g[0]);
@@ -363,8 +365,7 @@ void Grid_H::reset_residual(void)
 void Grid_H::reset_force(void)
 {
 	if (cellReso[0] > MIN_TRANSFER) {
-		int len = (cellReso[0] / MIN_TRANSFER * cellReso[1] / MIN_TRANSFER * cellReso[2] / MIN_TRANSFER) * pow(MIN_TRANSFER + 3, 3);
-		v_reset_h(f_h[0], len);
+		memset(f_h.data(), 0, f_h.size() * sizeof(VT));
 	}
 	else {
 		v_reset(f_g[0]);

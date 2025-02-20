@@ -78,7 +78,11 @@ void homo::Homogenization_H::update(float* rho, int pitchT)
 	grid->pad_cell_data(grid->rho_g);
 	mg_->updateStencils();
 }
-
+void homo::Homogenization_H::update_Host(std::vector<float>& rho)
+{
+	if (!rho.empty()) { grid->update(rho); }
+	mg_->updateStencils();
+}
 void homo::Homogenization_H::ConfigDiagPrecondition(float strength)
 {
 	diag_strength = strength;

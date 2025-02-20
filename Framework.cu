@@ -1,7 +1,7 @@
 #include "homogenization/Framework.cuh"
 #include <cmath>
 #include <algorithm>
-#include <thread>
+#include <omp.h>
 
 using namespace homo;
 using namespace culib;
@@ -157,29 +157,18 @@ void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
 	rho.resize(resox * resoy * resoz);
 
 	if (config.winit == cfg::InitWay::IWP) {
-		auto init_function = [&](int i, int j, int k) {
-			int index = i * resoy * resoz + j * resoz + k;
-			float p[3] = { float(i) / resox, float(j) / resoy, float(k) / resoz };
-			float x = p[0], y = p[1], z = p[2];
-			float val = 2 * (cos(2 * pi * x) * cos(2 * pi * y) + cos(2 * pi * y) * cos(2 * pi * z) + cos(2 * pi * z) * cos(2 * pi * x)) -
-				(cos(2 * 2 * pi * x) + cos(2 * 2 * pi * y) + cos(2 * 2 * pi * z));
-			rho[index] = tanproj(val, 20);
-			rho[index] = max(min(rho[index], 1.f), 0.001f);
-			};
-
-		// Parallelize over the 3D grid using multiple threads
-		std::vector<std::thread> threads;
 		for (int i = 0; i < resox; i++) {
 			for (int j = 0; j < resoy; j++) {
 				for (int k = 0; k < resoz; k++) {
-					threads.push_back(std::thread(init_function, i, j, k));
+					int index = i * resoy * resoz + j * resoz + k;
+					float p[3] = { float(i) / resox, float(j) / resoy, float(k) / resoz };
+					float x = p[0], y = p[1], z = p[2];
+					float val = 2 * (cos(2 * pi * x) * cos(2 * pi * y) + cos(2 * pi * y) * cos(2 * pi * z) + cos(2 * pi * z) * cos(2 * pi * x)) -
+						(cos(2 * 2 * pi * x) + cos(2 * 2 * pi * y) + cos(2 * 2 * pi * z));
+					rho[index] = tanproj(val, 20);
+					rho[index] = max(min(rho[index], 1.f), 0.001f);
 				}
 			}
-		}
-
-		// Join all threads
-		for (auto& t : threads) {
-			t.join();
 		}
 	}
 	else {
@@ -215,7 +204,68 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 		else {
 			std::copy(rho0->begin(), rho0->end(), rho.begin());
 		}
-		heat_tensor_t <float, decltype(rho)> Hh(hom_H, rho);
+		heat_tensor_host_t <float> Hh(hom_H, rho);
+		auto objective = (Hh(0, 0) - tt[0]).pow(2) + (Hh(1, 1) - tt[1]).pow(2) +
+			(Hh(2, 2) - tt[2]).pow(2) + (Hh(0, 1) - tt[3]).pow(2) +
+			(Hh(2, 1) - tt[4]).pow(2) + (Hh(0, 2) - tt[5]).pow(2) - 1e-2;
+
+		ConvergeChecker criteria(config.finthres);
+		OCOptimizer oc(ne, 0.001, 0.02, 0.5);
+
+		VolumeGovernor governor;
+		clock_t start = clock();
+		float final_val;
+		int itn;
+		for (itn = 0; itn < config.max_iter; itn++) {
+			float val = objective.eval();
+			final_val = val;
+			printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, governor.get_volume_bound());
+			printf("%f %f %f %f %f %f", Hh.H_[0][0], Hh.H_[1][1], Hh.H_[2][2], Hh.H_[0][1], Hh.H_[1][2], Hh.H_[0][2]);
+			float sum = 0.0;
+			omp_set_num_threads(8);
+#pragma omp parallel for reduction(+:sum)
+			for (size_t i = 0; i < rho.size(); i++) {
+				sum += rho[i] * rho[i] * rho[i];
+			}
+			float lowerBound = sum / pow(reso, 3);
+			sum = 0;
+#pragma omp parallel for reduction(+:sum)
+			for (size_t i = 0; i < rho.size(); i++) {
+				sum += rho[i];
+			}
+			float volfrac = sum / pow(reso, 3);
+			auto it = governor.volume_check(val, lowerBound, volfrac, itn, rho, Hh.H_);
+			if (it) {
+				printf("converged"); break;
+			}
+			objective.backward(1);
+			if (criteria.is_converge(itn, val) && governor.get_current_decrease() < 1e-2) { printf("converged\n"); break; }
+			//symmetrizeField(rho_H.value(), config.sym);
+			//symmetrizeField(rho_H.diff(), config.sym);
+			auto sens = Hh.sensitiveField;
+			int ereso[3] = { reso,reso,reso };
+			oc.filterSens(sens.data(), rho.data(), reso, ereso);
+			oc.update(sens.data(), rho.data(), governor.get_volume_bound());
+			clock_t end = clock();
+			double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+			ofs << elapsed_time << " " << val + 0.01 << "\n";
+		}
+		// ofs << itn << "\n";
+		if (governor.best_res != 100000 && governor.best_res < final_val) {
+			ofs << governor.best_res << "\n";
+			ofs << governor.val_last << "\n";
+			ofs << governor.hh[0][0] << " " << governor.hh[1][1] << " " << governor.hh[2][2] << " " << governor.hh[0][1] << " " << governor.hh[1][2] << " " << governor.hh[0][2] << "\n";
+			ofs << governor.best_vol << "\n";
+			// governor.best_rho.toVdb(filename);
+		}
+		else {
+			ofs << final_val << "\n";
+			ofs << governor.val_last << "\n";
+			ofs << Hh.H_[0][0] << " " << Hh.H_[1][1] << " " << Hh.H_[2][2] << " " << Hh.H_[0][1] << " " << Hh.H_[1][2] << " " << Hh.H_[0][2] << "\n";
+			//ofs << rho_H.sum().eval_imp() / pow(reso, 3) << "\n";
+			//rho_H.value().toVdb(filename);
+		}
+		ofs.close();
 	}
 	else {
 		var_tsexp_t<> rho_H(reso, reso, reso);

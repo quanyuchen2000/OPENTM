@@ -413,7 +413,10 @@ __global__ void Sensitivity_kernel_opt_2_H(
 	}
 }
 
-
+void homo::Homogenization_H::Sensitivity_host(float dC[3][3], std::vector<float> &sens, bool lexiOrder /*= false*/) 
+{
+	
+}
 void homo::Homogenization_H::Sensitivity(float dC[3][3], float* sens, int pitchT, bool lexiOrder /*= false*/)
 {
 	grid->useGrid_g();
