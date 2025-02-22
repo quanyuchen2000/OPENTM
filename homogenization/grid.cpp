@@ -243,7 +243,7 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	size_t total_gpu = 0;
 	size_t total_cpu = 0;
 	// judge whether to use host memory
-	bool use_host_memory = (cellReso[0] > MIN_TRANSFER);
+	use_host_memory = (cellReso[0] > MIN_TRANSFER);
 	if (use_host_memory){
 		int total_nv = (cellReso[0]/MIN_TRANSFER * cellReso[1]/MIN_TRANSFER * cellReso[2]/MIN_TRANSFER) * pow(MIN_TRANSFER+3, 3);
 		// the total data
@@ -296,13 +296,8 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	total_gpu += ne * sizeof(CellFlags);
 
 	if (is_root) {
-		if (!use_host_memory) {
-			total_gpu += ne * sizeof(float);
-			rho_g = getMem().addBuffer(homoutils::formated("%s_rho", getName().c_str()), ne * sizeof(float))->data<float>();
-		}
-		else {
-			total_cpu += pow(MIN_TRANSFER, 3) * sizeof(float);
-		}
+		total_gpu += ne * sizeof(float);
+		rho_g = getMem().addBuffer(homoutils::formated("%s_rho", getName().c_str()), ne * sizeof(float))->data<float>();
 	}
 
 	printf("%s allocated %zd MB GPU memory, %zd MB CPU memory\n", getName().c_str(), total_gpu / 1024 / 1024, total_cpu / 1024 / 1024);

@@ -73,18 +73,14 @@ __global__ void restrict_stencil_otf_aos_kernel_1_H(
 	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags
 );
 template<typename T>
+__global__ void restrict_stencil_otf_aos_kernel_alter_H(
+	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags
+);
+template<typename T>
 __global__ void restrict_stencil_otf_aos_kernel_host_H(
 	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags, glm::hvec3 pos, int blocksize
 );
-template<typename T>
-__global__ void restrict_stencil_otf_aos_kernel_1(
-	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags
-);
-__global__ void restrict_stencil_aos_kernel_1(
-	int nv_coarse, int nv_fine,
-	VertexFlags* vflags,
-	VertexFlags* vfineflags
-);
+
 __global__ void restrict_stencil_aos_kernel_1_H(
 	int nv_coarse, int nv_fine,
 	VertexFlags* vflags,
@@ -1377,8 +1373,9 @@ void homo::Grid_H::restrict_stencil(void)
 		cudaDeviceSynchronize();
 		cuda_error_check;
 		int nv = (cellReso[0] + 1) * (cellReso[1] + 1) * (cellReso[2] + 1);
-		make_kernel_param(&grid_size, &block_size, nv, 256);
-		restrict_stencil_otf_aos_kernel_1_H << <grid_size, block_size >> > (nv, fine->rho_g, fine->cellflag, fine->vertflag);
+		int ne = fine->cellReso[0] * fine->cellReso[1] * fine->cellReso[2];
+		make_kernel_param(&grid_size, &block_size, ne, 256);
+		restrict_stencil_otf_aos_kernel_alter_H << <grid_size, block_size >> > (ne, fine->rho_g, fine->cellflag, fine->vertflag);
 		cudaDeviceSynchronize();
 		cuda_error_check;
 		useGrid_g();
@@ -1407,6 +1404,7 @@ void homo::Grid_H::restrict_stencil(void)
 			int iy = (i / blockx) % blocky;
 			int iz = i / (blockx * blocky);
 			// here we only need to give the blocked rho
+			fine->vector2rho(ix, iy, iz);
 			// we need one thread one fine->cell
 			make_kernel_param(&grid_size, &block_size, nv, 256);
 			restrict_stencil_otf_aos_kernel_host_H << <grid_size, block_size >> > (nv, fine->rho_g, fine->cellflag, fine->vertflag, {ix, iy, iz}, MIN_TRANSFER);

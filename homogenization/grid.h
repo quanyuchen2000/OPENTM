@@ -142,7 +142,7 @@ struct Grid_H {
 	//double* fchar_g[6][3];
 	// float* uchar_g[3];
 	VT* uchar_h[3];
-	float* rho_g;
+	VT* rho_g;
 	using RhoT = std::remove_pointer_t<decltype(rho_g)>;
 	VertexFlags* vertflag;
 	CellFlags* cellflag;
@@ -361,6 +361,8 @@ struct Grid_H {
 	void testIndexer(void);
 	void testVflags(void);
 
+	// used to transfer data between host and device
+	void vector2rho(int blockx, int blocky, int blockz);
 private:
 	// return nv, ne
 	std::pair<int, int> countGS(void);

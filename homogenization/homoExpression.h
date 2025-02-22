@@ -153,7 +153,7 @@ namespace homo {
 	{
 		Scalar H_[3][3];
 		Scalar gradH_[3][3];
-		std::vector<float> densityField;
+		std::vector<float>* densityField;
 		std::vector<float> sensitiveField;
 		RefCounter counter;
 		Homogenization_H& domain_;
@@ -176,7 +176,7 @@ namespace homo {
 				for (int i = 0; i < 3; i++)
 					for (int j = 0; j < 3; j++)
 						gradH_[i][j] = 0;
-				domain_.update_Host(densityField);
+				domain_.update_Host(*densityField);
 				domain_.heatMatrix(H_);
 				expired = false;
 			}
@@ -203,7 +203,7 @@ namespace homo {
 		}
 	public:
 		//friend struct HomoTraits;
-		heat_tensor_host_t(Homogenization_H& dom, std::vector<float>& rho)
+		heat_tensor_host_t(Homogenization_H& dom, std::vector<float>* rho)
 			: domain_(dom), densityField(rho), expired(true) {
 			//if (domain_.grid->getCellReso() != rho.getDim()) {
 			//	throw std::runtime_error("density variable does not match the homogenization domain");

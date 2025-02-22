@@ -132,6 +132,97 @@ __global__ void restrict_stencil_otf_aos_kernel_1_H(
 	}
 }
 
+// gater per fine element matrix to coarse stencil, one thread for one rho
+template<typename T>
+__global__ void restrict_stencil_otf_aos_kernel_alter_H(
+	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags
+) {
+	//__shared__ glm::mat<3, 3, double> KE[8][8];
+	__shared__ float KE[8][8];
+	__shared__ int coarseReso[3];
+	__shared__ int fineReso[3];
+	__shared__ int gsFineCellReso[3][8];
+	__shared__ int gsFineCellEnd[8];
+
+	if (threadIdx.x < 3) {
+		coarseReso[threadIdx.x] = gGridCellReso[threadIdx.x];
+		fineReso[threadIdx.x] = coarseReso[threadIdx.x] * gUpCoarse[threadIdx.x];
+	}
+	if (threadIdx.x < 8) {
+		for (int i = 0; i < 3; i++)
+			gsFineCellReso[i][threadIdx.x] = gGsFineCellReso[i][threadIdx.x];
+		gsFineCellEnd[threadIdx.x] = gGsFineCellEnd[threadIdx.x];
+	}
+
+	loadTemplateMatrix_H(KE);
+	// have syncthreads
+
+	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+	int coarseRatio[3] = { gUpCoarse[0], gUpCoarse[1], gUpCoarse[2] };
+	int rhopos[3] = {
+		tid % fineReso[0],
+		tid / fineReso[0] % fineReso[1],
+		tid / (fineReso[0] * fineReso[1])};
+	size_t rhoid = tid;
+
+	bool debug = false;
+
+	if (rhoid >= ne) return;
+
+	// first we get the rho value
+	int eid = lexi2gs(rhopos, gsFineCellReso, gsFineCellEnd);
+	float rho_penal = powf(float(rholist[eid]), exp_penal[0]);
+	// rhopos on fine while rhoposc on coarse
+	int rhoposc[3] = { rhopos[0] / coarseRatio[0], rhopos[1] / coarseRatio[1], rhopos[2] / coarseRatio[2] };
+
+	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
+
+	if (debug) { printf("vipos = (%d, %d, %d)\n", rhoposc[0], rhoposc[1], rhoposc[2]); }
+
+	// vi is for the center vertex and vj for stencil node
+	for (int vi = 0; vi < 8; vi++) {
+		for (int vj = 0; vj < 8; vj++) {
+			int vipos[3] = { rhoposc[0] + vi % 2, rhoposc[1] + vi / 2 % 2, rhoposc[2] + vi / 4 };
+			int vid = vipos[0] + vipos[1] * (coarseReso[0] + 1) + vipos[2] * (coarseReso[0] + 1) * (coarseReso[1] + 1);
+			int vjpos[3] = { rhoposc[0] + vj % 2, rhoposc[1] + vj / 2 % 2, rhoposc[2] + vj / 4 };
+			int stencil_id = (vjpos[0] - vipos[0] + 1) + (vjpos[1] - vipos[1] + 1) * 3 + (vjpos[2] - vipos[2] + 1)*9;
+			// caculate st
+			float st = 0.0;
+
+			for (int e_vi = 0; e_vi < 8; e_vi++) {
+				int e_vi_fine_off[3] = {
+					rhopos[0] + e_vi % 2 - vipos[0] * coarseRatio[0],
+					rhopos[1] + e_vi / 2 % 2 - vipos[1] * coarseRatio[1],
+					rhopos[2] + e_vi / 4 - vipos[2] * coarseRatio[2]
+				};
+				float wi = (coarseRatio[0] - abs(e_vi_fine_off[0])) *
+					(coarseRatio[1] - abs(e_vi_fine_off[1])) *
+					(coarseRatio[2] - abs(e_vi_fine_off[2])) / pr;
+				if (debug) printf("   e_vi_off = (%d, %d, %d), wi = %f\n", e_vi_fine_off[0], e_vi_fine_off[1], e_vi_fine_off[2], wi);
+				wi *= rho_penal;
+				for (int e_vj = 0; e_vj < 8; e_vj++) {
+					int vij_off[3] = {
+						abs(rhopos[0] + e_vj % 2 - vjpos[0] * coarseRatio[0]),
+						abs(rhopos[1] + e_vj / 2 % 2 - vjpos[1] * coarseRatio[1]),
+						abs(rhopos[2] + e_vj / 4 - vjpos[2] * coarseRatio[2])
+					};
+					if (vij_off[0] > coarseRatio[0] || vij_off[1] > coarseRatio[1] ||
+						vij_off[2] > coarseRatio[2]) {
+						printf("vij_off[0] is %d", vij_off[0]);
+						printf("shouldn't go here");
+					}
+					float wj = (coarseRatio[0] - vij_off[0]) *
+						(coarseRatio[1] - vij_off[1]) *
+						(coarseRatio[2] - vij_off[2]) / pr;
+					if (debug) printf("    vij_off = (%d, %d, %d), wi = %f\n", vij_off[0], vij_off[1], vij_off[2], wj);
+					st += (wi * wj) * KE[e_vi][e_vj];
+				}
+			}
+			atomicAdd(&rxstencil_H[stencil_id][vid],st);
+		}
+	}
+}
+
 template<typename T>
 __global__ void restrict_stencil_otf_aos_kernel_host_H(
 	int nv, T* rholist, CellFlags* eflags, VertexFlags* vflags, glm::hvec3 pos, int blocksize
@@ -344,6 +435,15 @@ __global__ void restrict_stencil_aos_kernel_1_H(
 	}
 }
 
+void homo::Grid_H::vector2rho(int blockx, int blocky, int blockz) {
+	int blocksize = MIN_TRANSFER;
+	int bresox = cellReso[0]/blocksize, bresoy = cellReso[1]/blocksize, bresoz = cellReso[2]/blocksize;
+	int offset = (blockx + bresox * blocky + bresox * bresoy * blockz) * pow(MIN_TRANSFER + 2, 3);
+	// use kernal to gauss order rather than cudamemcpy
+	cudaMemcpy(rho_h + offset, rho_g, sizeof(VT) * n_gscells(), cudaMemcpyHostToDevice);
+};
+
 template __global__ void restrict_stencil_otf_aos_kernel_1_H<half>(int nv, half* rholist, CellFlags* eflags, VertexFlags* vflags);
 template __global__ void restrict_stencil_otf_aos_kernel_1_H<float>(int nv, float* rholist, CellFlags* eflags, VertexFlags* vflags);
+template __global__ void restrict_stencil_otf_aos_kernel_alter_H<float>(int ne, float* rholist, CellFlags* eflags, VertexFlags* vflags);
 template __global__ void restrict_stencil_otf_aos_kernel_host_H<float>(int nv, float* rholist, CellFlags* eflags, VertexFlags* vflags, glm::hvec3 pos, int blocksize);
