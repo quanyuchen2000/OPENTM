@@ -324,7 +324,8 @@ void Grid_H::useFchar(int k)
 	if (cellReso[0] > MIN_TRANSFER) {
 		// todo
 		enforce_unit_macro_strain_host(k);
-		// pad_vertex_data_host(f_h);
+		// padding by host function
+		//pad_vertex_data_host(f_h);
 	}
 	else {
 		enforce_unit_macro_strain(k);
@@ -814,6 +815,7 @@ void homo::Grid_H::restrict_stencil_arround_dirichelt_boundary(void) {
 	auto rholist = DevicePtr(fine->rho_g);
 	auto finereso = fine->cellReso;
 	std::map<std::array<int, 3>, float> pos2rho;
+	// we get the 8 vertex of fine grid
 	for (int xc_off = -2 * upCoarse[0]; xc_off < 2 * upCoarse[0]; xc_off++) {
 		for (int yc_off = -2 * upCoarse[1]; yc_off < 2 * upCoarse[1]; yc_off++) {
 			for (int zc_off = -2 * upCoarse[2]; zc_off < 2 * upCoarse[2]; zc_off++) {
@@ -823,8 +825,17 @@ void homo::Grid_H::restrict_stencil_arround_dirichelt_boundary(void) {
 					(zc_off + finereso[2]) % finereso[2]
 				};
 				int eid = epos[0] + epos[1] * finereso[0] + epos[2] * finereso[0] * finereso[1];
-				int egsid = fine->elexid2gsid(eid);
-				float prho = rhoPenalMin + powf(rholist[egsid], exp_penal);
+				float prho;
+				if (!fine->use_host_memory) {
+					int egsid = fine->elexid2gsid(eid);
+					prho = rholist[egsid];
+				}
+				else {
+					int block_id = (epos[0] / MIN_TRANSFER) + (epos[1] / MIN_TRANSFER) * (finereso[0] / MIN_TRANSFER) +
+						(epos[2] / MIN_TRANSFER) * (finereso[0] / MIN_TRANSFER * finereso[1] / MIN_TRANSFER);
+					int pos_id = (epos[0] % MIN_TRANSFER + 1) + (epos[1] % MIN_TRANSFER + 1) * MIN_TRANSFER + (epos[2] % MIN_TRANSFER + 1) * MIN_TRANSFER * MIN_TRANSFER;
+					float prho = (*rho_h)[block_id * pow(MIN_TRANSFER + 2, 3) + pos_id];
+				}
 				pos2rho[{xc_off, yc_off, zc_off}] = prho;
 				// printf("e(%d, %d, %d) = %4.2e\n", xc_off, yc_off, zc_off, prho);
 			}
@@ -943,4 +954,3 @@ void homo::Grid_H::restrict_stencil_arround_dirichelt_boundary(void) {
 		}
 	}
 }
-

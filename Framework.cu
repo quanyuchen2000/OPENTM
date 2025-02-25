@@ -1,4 +1,5 @@
 #include "homogenization/Framework.cuh"
+#include "homogenization/cpuFramework.h"
 #include <cmath>
 #include <algorithm>
 #include <omp.h>
@@ -147,111 +148,12 @@ void initDensity(var_tsexp_t<>& rho, cfg::HomoConfig config) {
 	// rho.value().clamp(0.001, 1);
 }
 
-void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
-	int resox = config.reso[0];
-	int resoy = config.reso[1];
-	int resoz = config.reso[2];
-	constexpr float pi = 3.1415926;
-
-	if (config.winit == cfg::InitWay::IWP) {
-		int off_set = 0;
-		// for each block init block
-		int block_numx = (resox / MIN_TRANSFER);
-		int block_numy = (resoy / MIN_TRANSFER);
-		int block_numz = (resoz / MIN_TRANSFER);
-
-		int block_num = block_numx * block_numy * block_numz;
-		int block_len = pow(MIN_TRANSFER + 2, 3);
-
-		for (int block_id = 0; block_id < block_num; block_id++) {
-			off_set = block_len * block_id;
-			int off_setx = block_id % block_numx, off_sety = block_id / block_numx % block_numy, off_setz = block_id / (block_numx * block_numy);
-			for (int k = 1; k < MIN_TRANSFER+1; k++) {
-				for (int j = 1; j < MIN_TRANSFER+1; j++) {
-					for (int i = 1; i < MIN_TRANSFER+1; i++) {
-						float x = float((i-1)+off_setx*(MIN_TRANSFER)) / resox, y = float((j-1)+off_sety*(MIN_TRANSFER)) / resoy, z = float((k-1)+off_setz*(MIN_TRANSFER)) / resoz;
-						float val = 2 * (cos(2 * pi * x) * cos(2 * pi * y) + cos(2 * pi * y) * cos(2 * pi * z) + cos(2 * pi * z) * cos(2 * pi * x)) -
-							(cos(2 * 2 * pi * x) + cos(2 * 2 * pi * y) + cos(2 * 2 * pi * z));
-						val = tanproj(val, 20);
-						val = max(min(val, 1.f), 0.001f);
-						int id = off_set + k * (MIN_TRANSFER + 2) * (MIN_TRANSFER + 2) + j * (MIN_TRANSFER + 2) + i;
-						rho[id] = val;
-
-					}
-				}
-			}
-		}
-	}
-	else {
-		// Other initialization methods are not supported
-		throw std::runtime_error("NO SUPPORT");
-	}
-}
-
-void update_density_boundary(std::vector<float>& rho, cfg::HomoConfig config) {
-	int resox = config.reso[0];
-	int resoy = config.reso[1];
-	int resoz = config.reso[2];
-	int off_set = 0;
-	// for each block init block
-	int block_numx = (resox / MIN_TRANSFER);
-	int block_numy = (resoy / MIN_TRANSFER);
-	int block_numz = (resoz / MIN_TRANSFER);
-
-	int block_num = block_numx * block_numy * block_numz;
-	int block_len = pow(MIN_TRANSFER + 2, 3);
-	for (int block_id = 0; block_id < block_num; block_id++) {
-		off_set = block_len * block_id;
-		int off_setx = block_id % block_numx, off_sety = block_id / block_numx % block_numy, off_setz = block_id / (block_numx * block_numy);
-		// k = 0
-		int tox, toy, toz;
-		int ti, tj, tk;
-		for (int k = 0; k < MIN_TRANSFER + 2; k++) {
-			for (int j = 0; j < MIN_TRANSFER + 2; j++) {
-				for (int i = 0; i < MIN_TRANSFER + 2; i++) {
-					if (!(i == 0 || i == MIN_TRANSFER + 1 || j == 0 || j == MIN_TRANSFER + 1 || k == 0 || k == MIN_TRANSFER + 1)) {
-						continue;
-					}
-					if (i == 0) {
-						tox = (off_setx - 1 + block_numx) % block_numx;
-						ti = MIN_TRANSFER;
-					}
-					else if (i == MIN_TRANSFER + 1) {
-						tox = (off_setx + 1 + block_numx) % block_numx;
-						ti = 1;
-					}
-					if (j == 0) {
-						toy = (off_sety - 1 + block_numy) % block_numy;
-						tj = MIN_TRANSFER;
-					}
-					else if (j == MIN_TRANSFER + 1) {
-						toy = (off_sety + 1 + block_numy) % block_numy;
-						tj = 1;
-					}
-					if (k == 0) {
-						toz = (off_setz - 1 + block_numz) % block_numz;
-						tk = MIN_TRANSFER;
-					}
-					else if (k == MIN_TRANSFER + 1) {
-						toz = (off_setz + 1 + block_numz) % block_numz;
-						tk = 1;
-					}
-					int id = off_set + k * (MIN_TRANSFER + 2) * (MIN_TRANSFER + 2) + j * (MIN_TRANSFER + 2) + i;
-					int tid = (tox + toy * block_numx + toz * block_numx * block_numy) * block_len + tk * (MIN_TRANSFER + 2) * (MIN_TRANSFER + 2) + tj * (MIN_TRANSFER + 2) + ti;
-					rho[id] = rho[tid];
-				}
-			}
-		}
-	}
-}
 
 std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = nullptr) {
 	std::ofstream ofs;
 	int reso = config.reso[0];
 	std::string filename;
 	filename = config.testname;
-	// config.useManagedMemory = false;
-	// config.inputrho = "1208040402020IWPNONE256oc";
 	filename.erase(std::remove(filename.begin(), filename.end(), '\t'), filename.end());
 	ofs.open(filename + ".txt", std::ios::app);
 	int ne = pow(reso, 3);
@@ -267,7 +169,10 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 		else {
 			std::copy(rho0->begin(), rho0->end(), rho.begin());
 		}
-		heat_tensor_host_t <float> Hh(hom_H, &rho);
+
+		std::vector<float> rhop(total_ne);
+
+		heat_tensor_host_t <float> Hh(hom_H, &rhop);
 		auto objective = (Hh(0, 0) - tt[0]).pow(2) + (Hh(1, 1) - tt[1]).pow(2) +
 			(Hh(2, 2) - tt[2]).pow(2) + (Hh(0, 1) - tt[3]).pow(2) +
 			(Hh(2, 1) - tt[4]).pow(2) + (Hh(0, 2) - tt[5]).pow(2) - 1e-2;
@@ -280,7 +185,8 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 		float final_val;
 		int itn;
 		for (itn = 0; itn < config.max_iter; itn++) {
-			update_density_boundary(rho, config);
+			caculate_rhop(rho, rhop, config);
+			update_density_boundary(rhop, config);
 			float val = objective.eval();
 			final_val = val;
 			printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, governor.get_volume_bound());
@@ -306,7 +212,9 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			if (criteria.is_converge(itn, val) && governor.get_current_decrease() < 1e-2) { printf("converged\n"); break; }
 			//symmetrizeField(rho_H.value(), config.sym);
 			//symmetrizeField(rho_H.diff(), config.sym);
-			auto sens = Hh.sensitiveField;
+			std::vector<float> *sensp = &Hh.sensitiveField;
+			std::vector<float> sens;
+			caculate_sens(sens, *sensp, rho, config);
 			int ereso[3] = { reso,reso,reso };
 			oc.filterSens(sens.data(), rho.data(), reso, ereso);
 			oc.update(sens.data(), rho.data(), governor.get_volume_bound());

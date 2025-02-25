@@ -216,7 +216,9 @@ struct Grid_H {
 	}
 
 	void update(float* rho, int pitchT = -1, bool lexiOrder = true);
+
 	void update(std::vector<float> &rho);
+	void update_host(float* rho);
 
 	void buildRoot(int xreso, int yreso, int zreso, GridConfig config);
 
@@ -290,10 +292,6 @@ struct Grid_H {
 
 	void translateForce(int type_, VT* v[1]); // 1. zero dirichlet force; 2. zero global translation
 
-	//void reset_density(float rho);
-
-	//void randDensity(void);
-
 	void getDensity(std::vector<float>& rho, bool lexiOrder = false);
 
 	void getGsVertexPos(std::vector<int> pos[3]);
@@ -351,9 +349,6 @@ struct Grid_H {
 	void pad_vertex_data(float* v[1]);
 	void pad_vertex_data(half* v[1]);
 
-	void pad_vertex_data_host(float* v[1]);
-	void pad_vertex_data_host(half* v[1]);
-
 	void pad_cell_data(float* e);
 	void pad_cell_data(half* e);
 
@@ -362,7 +357,7 @@ struct Grid_H {
 	void testVflags(void);
 
 	// used to transfer data between host and device
-	void vector2rho(int blockx, int blocky, int blockz);
+	void vector2rho(int blockx, int blocky, int blockz, VT* tmp);
 private:
 	// return nv, ne
 	std::pair<int, int> countGS(void);

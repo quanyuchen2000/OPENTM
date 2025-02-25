@@ -225,9 +225,8 @@ __global__ void restrict_stencil_otf_aos_kernel_alter_H(
 
 template<typename T>
 __global__ void restrict_stencil_otf_aos_kernel_host_H(
-	int nv, T* rholist, CellFlags* eflags, VertexFlags* vflags, glm::hvec3 pos, int blocksize
+	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags, int bx, int by, int bz, int blocksize
 ) {
-	//__shared__ glm::mat<3, 3, double> KE[8][8];
 	__shared__ float KE[8][8];
 	__shared__ int coarseReso[3];
 	__shared__ int fineReso[3];
@@ -245,100 +244,74 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 	}
 
 	loadTemplateMatrix_H(KE);
+	// have syncthreads
 
 	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
 	int coarseRatio[3] = { gUpCoarse[0], gUpCoarse[1], gUpCoarse[2] };
-	int vipos[3] = {
-		tid % (coarseReso[0] + 1),
-		tid / (coarseReso[0] + 1) % (coarseReso[1] + 1),
-		tid / ((coarseReso[0] + 1) * (coarseReso[1] + 1)) };
-	size_t vid = tid;
+	int rhopos[3] = {
+		tid % fineReso[0] + MIN_TRANSFER * bx,
+		tid / fineReso[0] % fineReso[1] + MIN_TRANSFER * by,
+		tid / (fineReso[0] * fineReso[1]) + MIN_TRANSFER * bz };
+	size_t rhoid = tid;
 
 	bool debug = false;
 
-	if (vid >= nv) return;
+	if (rhoid >= ne) return;
 
-	vipos[0] *= coarseRatio[0]; vipos[1] *= coarseRatio[1]; vipos[2] *= coarseRatio[2];
+	// first we get the rho value
+	int eidpos[3] = { tid % fineReso[0], tid / fineReso[0] % fineReso[1], tid / (fineReso[0] * fineReso[1]) };
+	int eid = lexi2gs(eidpos, gsFineCellReso, gsFineCellEnd);
+	float rho_penal = powf(float(rholist[eid]), exp_penal[0]);
+
+	// rhopos on fine while rhoposc on coarse
+	int rhoposc[3] = { rhopos[0] / coarseRatio[0], rhopos[1] / coarseRatio[1], rhopos[2] / coarseRatio[2] };
 
 	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
 
-	if (debug) { printf("vipos = (%d, %d, %d)\n", vipos[0], vipos[1], vipos[2]); }
+	// if (debug) { printf("vipos = (%d, %d, %d)\n", rhoposc[0], rhoposc[1], rhoposc[2]); }
 
-	for (int vj = 0; vj < 27; vj++) {
-		int coarse_vj_off[3] = {
-			coarseRatio[0] * (vj % 3 - 1),
-			coarseRatio[1] * (vj / 3 % 3 - 1),
-			coarseRatio[2] * (vj / 9 - 1)
-		};
-		//glm::mat<3, 3, double> st(0.f);
-		float st(0.f);
-		if (debug) { printf("coarse_vj_off = (%d, %d, %d)\n", coarse_vj_off[0], coarse_vj_off[1], coarse_vj_off[2]); }
-		for (int xfine_off = -coarseRatio[0]; xfine_off < coarseRatio[0]; xfine_off++) {
-			for (int yfine_off = -coarseRatio[1]; yfine_off < coarseRatio[1]; yfine_off++) {
-				for (int zfine_off = -coarseRatio[2]; zfine_off < coarseRatio[2]; zfine_off++) {
-					int e_fine_off[3] = {
-						coarse_vj_off[0] + xfine_off,
-						coarse_vj_off[1] + yfine_off,
-						coarse_vj_off[2] + zfine_off,
+	// vi is for the center vertex and vj for stencil node
+	for (int vi = 0; vi < 8; vi++) {
+		for (int vj = 0; vj < 8; vj++) {
+			int vipos[3] = { rhoposc[0] + vi % 2, rhoposc[1] + vi / 2 % 2, rhoposc[2] + vi / 4 };
+			int vid = vipos[0] + vipos[1] * (coarseReso[0] + 1) + vipos[2] * (coarseReso[0] + 1) * (coarseReso[1] + 1);
+			int vjpos[3] = { rhoposc[0] + vj % 2, rhoposc[1] + vj / 2 % 2, rhoposc[2] + vj / 4 };
+			int stencil_id = (vjpos[0] - vipos[0] + 1) + (vjpos[1] - vipos[1] + 1) * 3 + (vjpos[2] - vipos[2] + 1) * 9;
+			// caculate st
+			float st = 0.0;
+
+			for (int e_vi = 0; e_vi < 8; e_vi++) {
+				int e_vi_fine_off[3] = {
+					rhopos[0] + e_vi % 2 - vipos[0] * coarseRatio[0],
+					rhopos[1] + e_vi / 2 % 2 - vipos[1] * coarseRatio[1],
+					rhopos[2] + e_vi / 4 - vipos[2] * coarseRatio[2]
+				};
+				float wi = (coarseRatio[0] - abs(e_vi_fine_off[0])) *
+					(coarseRatio[1] - abs(e_vi_fine_off[1])) *
+					(coarseRatio[2] - abs(e_vi_fine_off[2])) / pr;
+				if (debug) printf("   e_vi_off = (%d, %d, %d), wi = %f\n", e_vi_fine_off[0], e_vi_fine_off[1], e_vi_fine_off[2], wi);
+				wi *= rho_penal;
+				for (int e_vj = 0; e_vj < 8; e_vj++) {
+					int vij_off[3] = {
+						abs(rhopos[0] + e_vj % 2 - vjpos[0] * coarseRatio[0]),
+						abs(rhopos[1] + e_vj / 2 % 2 - vjpos[1] * coarseRatio[1]),
+						abs(rhopos[2] + e_vj / 4 - vjpos[2] * coarseRatio[2])
 					};
-					// exclude elements out of neighborhood
-					if (e_fine_off[0] < -coarseRatio[0] || e_fine_off[0] >= coarseRatio[0] ||
-						e_fine_off[1] < -coarseRatio[1] || e_fine_off[1] >= coarseRatio[1] ||
-						e_fine_off[2] < -coarseRatio[2] || e_fine_off[2] >= coarseRatio[2]) {
-						continue;
-					};
-					if (debug) { printf(" e_fine_off = (%d, %d, %d)\n", e_fine_off[0], e_fine_off[1], e_fine_off[2]); }
-					int e_fine_pos[3] = {
-						vipos[0] + e_fine_off[0], vipos[1] + e_fine_off[1], vipos[2] + e_fine_off[2]
-					};
-					// exclude padded element
-					if (e_fine_pos[0] < 0 || e_fine_pos[0] >= fineReso[0] ||
-						e_fine_pos[1] < 0 || e_fine_pos[1] >= fineReso[1] ||
-						e_fine_pos[2] < 0 || e_fine_pos[2] >= fineReso[2]) {
-						continue;
+					if (vij_off[0] > coarseRatio[0] || vij_off[1] > coarseRatio[1] ||
+						vij_off[2] > coarseRatio[2]) {
+						printf("vij_off[0] is %d", vij_off[0]);
+						printf("shouldn't go here");
 					}
-					int eid = lexi2gs(e_fine_pos, gsFineCellReso, gsFineCellEnd);
-					//auto eflag = eflags[eid];
-					float rho_penal = powf(float(rholist[eid]), exp_penal[0]);
-					if (debug) { printf(" e_fine_pos = (%d, %d, %d), eid = %d, rhopenal = %f\n", e_fine_pos[0], e_fine_pos[1], e_fine_pos[2], eid, rho_penal); }
-					for (int e_vi = 0; e_vi < 8; e_vi++) {
-						int e_vi_fine_off[3] = {
-							e_fine_off[0] + e_vi % 2,
-							e_fine_off[1] + e_vi / 2 % 2,
-							e_fine_off[2] + e_vi / 4
-						};
-						if (!inStrictBound(e_vi_fine_off, coarseRatio)) continue;
-						float wi = (coarseRatio[0] - abs(e_vi_fine_off[0])) *
-							(coarseRatio[1] - abs(e_vi_fine_off[1])) *
-							(coarseRatio[2] - abs(e_vi_fine_off[2])) / pr;
-						if (debug) printf("   e_vi_off = (%d, %d, %d), wi = %f\n", e_vi_fine_off[0], e_vi_fine_off[1], e_vi_fine_off[2], wi);
-						wi *= rho_penal;
-						for (int e_vj = 0; e_vj < 8; e_vj++) {
-							int vij_off[3] = {
-								abs(e_fine_off[0] + e_vj % 2 - coarse_vj_off[0]),
-								abs(e_fine_off[1] + e_vj / 2 % 2 - coarse_vj_off[1]),
-								abs(e_fine_off[2] + e_vj / 4 - coarse_vj_off[2])
-							};
-							if (vij_off[0] >= coarseRatio[0] || vij_off[1] >= coarseRatio[1] ||
-								vij_off[2] >= coarseRatio[2]) {
-								continue;
-							}
-							float wj = (coarseRatio[0] - vij_off[0]) *
-								(coarseRatio[1] - vij_off[1]) *
-								(coarseRatio[2] - vij_off[2]) / pr;
-							if (debug) printf("    vij_off = (%d, %d, %d), wi = %f\n", vij_off[0], vij_off[1], vij_off[2], wj);
-							st += (wi * wj) * KE[e_vi][e_vj];
-						}
-					}
+					float wj = (coarseRatio[0] - vij_off[0]) *
+						(coarseRatio[1] - vij_off[1]) *
+						(coarseRatio[2] - vij_off[2]) / pr;
+					if (debug) printf("    vij_off = (%d, %d, %d), wi = %f\n", vij_off[0], vij_off[1], vij_off[2], wj);
+					st += (wi * wj) * KE[e_vi][e_vj];
 				}
 			}
+			printf("p1, p2:%d, %d\n", vi, vj);
+			atomicAdd(&rxstencil_H[stencil_id][vid], st);
 		}
-		if (vj == 13) {
-			if (abs(st) < 1e-4) {
-				st = 1e-4;
-			}
-		}
-		rxstencil_H[vj][vid] = st;
 	}
 }
 
@@ -435,15 +408,16 @@ __global__ void restrict_stencil_aos_kernel_1_H(
 	}
 }
 
-void homo::Grid_H::vector2rho(int blockx, int blocky, int blockz) {
+void homo::Grid_H::vector2rho(int blockx, int blocky, int blockz, VT* tmp) {
 	int blocksize = MIN_TRANSFER;
 	int bresox = cellReso[0]/blocksize, bresoy = cellReso[1]/blocksize, bresoz = cellReso[2]/blocksize;
 	int offset = (blockx + bresox * blocky + bresox * bresoy * blockz) * pow(MIN_TRANSFER + 2, 3);
-	// use kernal to gauss order rather than cudamemcpy
-	cudaMemcpy(rho_h + offset, rho_g, sizeof(VT) * n_gscells(), cudaMemcpyHostToDevice);
+	// set a temp rho for data
+	cudaMemcpy(tmp, rho_h->data() + offset, pow(MIN_TRANSFER + 2, 3) * sizeof(VT), cudaMemcpyHostToDevice);
+	update_host(tmp);
 };
 
 template __global__ void restrict_stencil_otf_aos_kernel_1_H<half>(int nv, half* rholist, CellFlags* eflags, VertexFlags* vflags);
 template __global__ void restrict_stencil_otf_aos_kernel_1_H<float>(int nv, float* rholist, CellFlags* eflags, VertexFlags* vflags);
 template __global__ void restrict_stencil_otf_aos_kernel_alter_H<float>(int ne, float* rholist, CellFlags* eflags, VertexFlags* vflags);
-template __global__ void restrict_stencil_otf_aos_kernel_host_H<float>(int nv, float* rholist, CellFlags* eflags, VertexFlags* vflags, glm::hvec3 pos, int blocksize);
+template __global__ void restrict_stencil_otf_aos_kernel_host_H<float>(int nv, float* rholist, CellFlags* eflags, VertexFlags* vflags, int bx, int by, int bz, int blocksize);

@@ -78,7 +78,7 @@ __global__ void restrict_stencil_otf_aos_kernel_alter_H(
 );
 template<typename T>
 __global__ void restrict_stencil_otf_aos_kernel_host_H(
-	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags, glm::hvec3 pos, int blocksize
+	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags, int bx, int by, int bz, int blocksize
 );
 
 __global__ void restrict_stencil_aos_kernel_1_H(
@@ -1300,6 +1300,7 @@ void homo::Grid_H::enforce_unit_macro_strain_host(int istrain)
 	VertexFlags* vflags = vertflag;
 	CellFlags* eflags = cellflag;
 	size_t grid_size, block_size;
+	// for blocks do below
 	devArray_t<VT*, 1> fcharlist{ f_g[0] };
 	make_kernel_param(&grid_size, &block_size, n_gsvertices(), 256);
 	enforce_unit_macro_strain_kernel_H << <grid_size, block_size >> > (n_gsvertices(), istrain, fcharlist, vflags, eflags, rho_g);
@@ -1372,7 +1373,6 @@ void homo::Grid_H::restrict_stencil(void)
 		}
 		cudaDeviceSynchronize();
 		cuda_error_check;
-		int nv = (cellReso[0] + 1) * (cellReso[1] + 1) * (cellReso[2] + 1);
 		int ne = fine->cellReso[0] * fine->cellReso[1] * fine->cellReso[2];
 		make_kernel_param(&grid_size, &block_size, ne, 256);
 		restrict_stencil_otf_aos_kernel_alter_H << <grid_size, block_size >> > (ne, fine->rho_g, fine->cellflag, fine->vertflag);
@@ -1393,25 +1393,30 @@ void homo::Grid_H::restrict_stencil(void)
 		}
 		cudaDeviceSynchronize();
 		cuda_error_check;
-		int nv = (cellReso[0] + 1) * (cellReso[1] + 1) * (cellReso[2] + 1);
+		int ne = fine->cellReso[0] * fine->cellReso[1] * fine->cellReso[2];
+		int ne_block = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER;
 
 		int blockx, blocky, blockz;
 		blockx = fine->cellReso[0] / MIN_TRANSFER;
 		blocky = fine->cellReso[1] / MIN_TRANSFER;
 		blockz = fine->cellReso[2] / MIN_TRANSFER;
+		auto tmpname = getMem().addBuffer(pow(MIN_TRANSFER + 2, 3) * sizeof(VT));
+		VT* tmp = getMem().getBuffer(tmpname)->data<VT>();
 		for (int i = 0; i < blockx * blocky * blockz; i++) {
-			int ix = i % blockx;
-			int iy = (i / blockx) % blocky;
-			int iz = i / (blockx * blocky);
+			// block_pos
+			int bx = i % blockx;
+			int by = (i / blockx) % blocky;
+			int bz = i / (blockx * blocky);
 			// here we only need to give the blocked rho
-			fine->vector2rho(ix, iy, iz);
+			fine->vector2rho(bx, by, bz, tmp);
+			cuda_error_check;
 			// we need one thread one fine->cell
-			make_kernel_param(&grid_size, &block_size, nv, 256);
-			restrict_stencil_otf_aos_kernel_host_H << <grid_size, block_size >> > (nv, fine->rho_g, fine->cellflag, fine->vertflag, {ix, iy, iz}, MIN_TRANSFER);
+			make_kernel_param(&grid_size, &block_size, ne_block, 256);
+			restrict_stencil_otf_aos_kernel_host_H << <grid_size, block_size >> > (ne_block, fine->rho_g, fine->cellflag, fine->vertflag, bx, by, bz, MIN_TRANSFER);
 			cudaDeviceSynchronize();
 			cuda_error_check;
 		}
-		
+		getMem().deleteBuffer(tmpname);
 		useGrid_g();
 		lexiStencil2gsorder();
 		enforce_period_stencil(true);
@@ -2354,14 +2359,6 @@ void homo::Grid_H::pad_vertex_data(half* v[1])
 {
 	pad_vertex_data_imp<half, 1>(v, cellReso, vertflag);
 }
-void homo::Grid_H::pad_vertex_data_host(float* v[1])
-{
-	pad_vertex_data_imp<float, 1>(v, cellReso, vertflag);
-}
-void homo::Grid_H::pad_vertex_data_host(half* v[1])
-{
-	pad_vertex_data_imp<half, 1>(v, cellReso, vertflag);
-}
 
 
 template<typename T>
@@ -2523,6 +2520,26 @@ __global__ void update_rho_kernel(
 	dstrho[eid] = srcrho[sid];
 }
 
+template<typename T>
+__global__ void update_rho_host_kernel(
+	int ne, VertexFlags* vflags, CellFlags* eflags,
+	float* srcrho, T* dstrho
+) {
+	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+	if (tid >= ne) return;
+	// srcrho[tid];
+	int pos[3] = { tid % (MIN_TRANSFER + 2), tid / (MIN_TRANSFER + 2) % (MIN_TRANSFER + 2), tid / (MIN_TRANSFER + 2) / (MIN_TRANSFER + 2) };
+	int gsid = lexi2gs(pos, gGsCellReso, gGsCellEnd);
+
+	CellFlags eflag;
+
+	eflag = eflags[gsid];
+
+	if (eflag.is_fiction()) return;
+
+	dstrho[gsid] = srcrho[tid];
+}
+
 template<typename T, int N, typename Flag>
 __global__ void pad_data_kernel(
 	int nsrcpadd, devArray_t<T*, N> v, Flag* flags,
@@ -2679,6 +2696,17 @@ void homo::Grid_H::update(float* rho, int pitchT, bool lexiOrder) {
 		cuda_error_check;
 		pad_cell_data(rho_g);
 	}
+}
+void homo::Grid_H::update_host(float* rho) {
+	useGrid_g();
+	size_t grid_size, block_size;
+	int ne = n_gscells();
+	auto vflags = vertflag;
+	auto eflags = cellflag;
+	make_kernel_param(&grid_size, &block_size, ne, 256);
+	update_rho_host_kernel << <grid_size, block_size >> > (ne, vflags, eflags, rho, rho_g);
+	cudaDeviceSynchronize();
+	cuda_error_check;
 }
 
 template<typename T>
