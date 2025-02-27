@@ -60,8 +60,10 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		int block_len = grids[0]->n_gsvertices();
 
 		for (int i = 0; i < block_num; i++) {
+			// give in rho_g u_g
+			grids[0]->gs_relaxation(w_SOR);
+			// u_g out to u_h
 		}
-		grids[0]->gs_relaxation(w_SOR);
 	}
 	for (int i = 1; i < grids.size(); i++) {
 		if (i == 1) {

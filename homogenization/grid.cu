@@ -1427,6 +1427,7 @@ void homo::Grid_H::restrict_stencil(void)
 			// here we only need to give the blocked rho
 			fine->vector2rho(bx, by, bz, tmp);
 			cuda_error_check;
+			useGrid_g();
 			// we need one thread one fine->cell
 			make_kernel_param(&grid_size, &block_size, ne_block, 256);
 			restrict_stencil_otf_aos_kernel_host_H << <grid_size, block_size >> > (ne_block, fine->rho_g, fine->cellflag, fine->vertflag, bx, by, bz, MIN_TRANSFER);
@@ -1438,7 +1439,7 @@ void homo::Grid_H::restrict_stencil(void)
 		lexiStencil2gsorder();
 		enforce_period_stencil(true);
 	}
-	else 
+	else
 	{
 		useGrid_g();
 		cudaDeviceSynchronize();

@@ -256,7 +256,9 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 	bool debug = false;
 
 	if (rhoid >= ne) return;
-
+	if (tid == 0) {
+		printf("head at:(%d, %d, %d)", rhopos[0], rhopos[1], rhopos[2]);
+	}
 	// first we get the rho value
 	int eidpos[3] = { tid % MIN_TRANSFER, tid / MIN_TRANSFER % MIN_TRANSFER, tid / (MIN_TRANSFER * MIN_TRANSFER) };
 	int eid = lexi2gs(eidpos, gsFineCellReso, gsFineCellEnd);
@@ -306,7 +308,7 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 					st += (wi * wj) * KE[e_vi][e_vj];
 				}
 			}
-			//atomicAdd(&rxstencil_H[stencil_id][vid], st);
+			atomicAdd(&rxstencil_H[stencil_id][vid], st);
 		}
 	}
 }

@@ -903,8 +903,8 @@ void homo::Grid_H::restrict_stencil_arround_dirichelt_boundary(void) {
 				else {
 					int block_id = (epos[0] / MIN_TRANSFER) + (epos[1] / MIN_TRANSFER) * (finereso[0] / MIN_TRANSFER) +
 						(epos[2] / MIN_TRANSFER) * (finereso[0] / MIN_TRANSFER * finereso[1] / MIN_TRANSFER);
-					int pos_id = (epos[0] % MIN_TRANSFER + 1) + (epos[1] % MIN_TRANSFER + 1) * MIN_TRANSFER + (epos[2] % MIN_TRANSFER + 1) * MIN_TRANSFER * MIN_TRANSFER;
-					float prho = (*rho_h)[block_id * pow(MIN_TRANSFER + 2, 3) + pos_id];
+					int pos_id = (epos[0] % MIN_TRANSFER + 1) + (epos[1] % MIN_TRANSFER + 1) * (MIN_TRANSFER + 2) + (epos[2] % MIN_TRANSFER + 1) * (MIN_TRANSFER+2) * (MIN_TRANSFER+2);
+					prho = (*fine->rho_h)[block_id * pow(MIN_TRANSFER + 2, 3) + pos_id];
 				}
 				pos2rho[{xc_off, yc_off, zc_off}] = prho;
 				// printf("e(%d, %d, %d) = %4.2e\n", xc_off, yc_off, zc_off, prho);
