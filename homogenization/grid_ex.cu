@@ -245,21 +245,20 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 
 	loadTemplateMatrix_H(KE);
 	// have syncthreads
-
 	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
 	int coarseRatio[3] = { gUpCoarse[0], gUpCoarse[1], gUpCoarse[2] };
 	int rhopos[3] = {
-		tid % fineReso[0] + MIN_TRANSFER * bx,
-		tid / fineReso[0] % fineReso[1] + MIN_TRANSFER * by,
-		tid / (fineReso[0] * fineReso[1]) + MIN_TRANSFER * bz };
+		tid % MIN_TRANSFER + MIN_TRANSFER * bx,
+		tid / MIN_TRANSFER % MIN_TRANSFER + MIN_TRANSFER * by,
+		tid / (MIN_TRANSFER * MIN_TRANSFER) + MIN_TRANSFER * bz };
 	size_t rhoid = tid;
-
 	bool debug = false;
 
 	if (rhoid >= ne) return;
 
 	// first we get the rho value
-	int eidpos[3] = { tid % fineReso[0], tid / fineReso[0] % fineReso[1], tid / (fineReso[0] * fineReso[1]) };
+	int eidpos[3] = { tid % MIN_TRANSFER, tid / MIN_TRANSFER % MIN_TRANSFER, tid / (MIN_TRANSFER * MIN_TRANSFER) };
 	int eid = lexi2gs(eidpos, gsFineCellReso, gsFineCellEnd);
 	float rho_penal = powf(float(rholist[eid]), exp_penal[0]);
 
@@ -267,8 +266,6 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 	int rhoposc[3] = { rhopos[0] / coarseRatio[0], rhopos[1] / coarseRatio[1], rhopos[2] / coarseRatio[2] };
 
 	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
-
-	// if (debug) { printf("vipos = (%d, %d, %d)\n", rhoposc[0], rhoposc[1], rhoposc[2]); }
 
 	// vi is for the center vertex and vj for stencil node
 	for (int vi = 0; vi < 8; vi++) {
@@ -309,8 +306,7 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 					st += (wi * wj) * KE[e_vi][e_vj];
 				}
 			}
-			printf("p1, p2:%d, %d\n", vi, vj);
-			atomicAdd(&rxstencil_H[stencil_id][vid], st);
+			//atomicAdd(&rxstencil_H[stencil_id][vid], st);
 		}
 	}
 }

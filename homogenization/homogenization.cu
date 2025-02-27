@@ -4,7 +4,7 @@
 #include "tictoc.h"
 #include "cuda_fp16.h"
 #include "mma.h"
-
+#include "cpuFramework.h"
 #define USE_LAME_MATRIX 1
 
 using namespace homo;
@@ -177,15 +177,24 @@ __global__ void fillTotalVertices_kernel_H(
 		}
 	}
 }
+
 void homo::Homogenization_H::heatMatrix(double C[3][3]) {
 	mg_->reset_displacement();
 	for (int i = 0; i < 3; i++) {
 			grid->useFchar(i);
-			// here we can use some special initial to accerate however not necessary
-			grid->useUchar(i);
 
-			grid->translateForce(2, grid->u_g);
+			// here we can use some special initial to accerate however not necessary
+			if (!grid->use_host_memory) {
+				grid->useUchar(i);
+				grid->translateForce(2, grid->u_g);
+			}
+			else {
+				// here translateForce may use CPU?
+				subtract_mean_parallel(grid->u_h);
+			}
 			mg_->solveEquation(config.femRelThres);
+
+			// stash u_g to uchar_h or something like this
 			grid->setUchar(i, grid->getDisplacement());
 	}
 	// in heat method the vol is the real volume that means 1*1*1

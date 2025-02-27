@@ -4,6 +4,7 @@
 #include "matlab/matlab_utils.h"
 #include "tictoc.h"
 #include "utils.h"
+#include "cpuFramework.h"
 
 std::shared_ptr<homo::Grid_H> homo::MG_H::getRootGrid(void)
 {
@@ -45,12 +46,32 @@ void homo::MG_H::build(MGConfig config)
 
 void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*/)
 {
-	for (int i = 0; i < grids.size(); i++) {
-		if (i != 0) {
-			grids[i - 1]->update_residual();
-			grids[i]->restrict_residual();
-			grids[i]->reset_displacement();
+	if (!grids[0]->use_host_memory) {
+		grids[0]->gs_relaxation(w_SOR);
+	}
+	else {
+		// for blocks use gs_relaxation
+		// u_g f_g rho_g
+		auto cellReso = grids[0]->cellReso;
+		int block_numx = (cellReso[0] / MIN_TRANSFER);
+		int block_numy = (cellReso[1] / MIN_TRANSFER);
+		int block_numz = (cellReso[2] / MIN_TRANSFER);
+		int block_num = block_numx * block_numy * block_numz;
+		int block_len = grids[0]->n_gsvertices();
+
+		for (int i = 0; i < block_num; i++) {
 		}
+		grids[0]->gs_relaxation(w_SOR);
+	}
+	for (int i = 1; i < grids.size(); i++) {
+		if (i == 1) {
+		}
+		else {
+			grids[i - 1]->update_residual();
+			// restrict_residual may need another kernel
+			grids[i]->restrict_residual();
+		}
+		grids[i]->reset_displacement();
 		if (i == grids.size() - 1) {
 			grids[i]->solveHostEquation();
 			grids[i]->update_residual();
@@ -61,15 +82,17 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		}
 	}
 
-	for (int i = grids.size() - 2; i >= 0; i--) {
+	for (int i = grids.size() - 2; i > 0; i--) {
 		grids[i]->prolongate_correction();
 		grids[i]->gs_relaxation(w_SOR);
 	}
-
-	// not necessary here
-	//grids[0]->update_residual();
-
-	return /*grids[0]->relative_residual()*/;
+	if (!grids[0]->use_host_memory) {
+		grids[0]->prolongate_correction();
+		grids[0]->gs_relaxation(w_SOR);
+	}
+	else {
+	}
+	return;
 }
 
 void homo::MG_H::reset_displacement(void)
@@ -85,7 +108,13 @@ double homo::MG_H::solveEquation(double tol /*= 1e-2*/, bool with_guess /*= true
 	int iter = 0;
 	if (!with_guess) { grids[0]->reset_displacement(); }
 #if 1
-	double fnorm = grids[0]->v_norm(grids[0]->f_g[0]);
+	double fnorm;
+	if (!grids[0]->use_host_memory) {
+		fnorm = grids[0]->v_norm(grids[0]->f_g[0]);
+	}
+	else {
+		fnorm = norm_host(grids[0]->f_h);
+	}
 	int overflow_counter = 2;
 	bool enable_translate_displacement = false;
 	std::vector<double> errlist;

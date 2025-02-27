@@ -1301,11 +1301,30 @@ void homo::Grid_H::enforce_unit_macro_strain_host(int istrain)
 	CellFlags* eflags = cellflag;
 	size_t grid_size, block_size;
 	// for blocks do below
-	devArray_t<VT*, 1> fcharlist{ f_g[0] };
-	make_kernel_param(&grid_size, &block_size, n_gsvertices(), 256);
-	enforce_unit_macro_strain_kernel_H << <grid_size, block_size >> > (n_gsvertices(), istrain, fcharlist, vflags, eflags, rho_g);
-	cudaDeviceSynchronize();
-	cuda_error_check;
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	blockz = cellReso[2] / MIN_TRANSFER;
+	auto tmpname = getMem().addBuffer(pow(MIN_TRANSFER + 2, 3) * sizeof(VT));
+	VT* tmp = getMem().getBuffer(tmpname)->data<VT>();
+	for (int i = 0; i < blockx * blocky * blockz; i++) {
+		// block_pos
+		int bx = i % blockx;
+		int by = (i / blockx) % blocky;
+		int bz = i / (blockx * blocky);
+		vector2rho(bx, by, bz, tmp);
+		cuda_error_check;
+		// give in the right rho_g
+		devArray_t<VT*, 1> fcharlist{ f_g[0] };
+		make_kernel_param(&grid_size, &block_size, n_gsvertices(), 256);
+		enforce_unit_macro_strain_kernel_H << <grid_size, block_size >> > (n_gsvertices(), istrain, fcharlist, vflags, eflags, rho_g);
+		cudaDeviceSynchronize();
+		cuda_error_check;
+		// download to f_h
+		size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
+		cudaMemcpy(f_h.data() + offset, f_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
+	}
+	getMem().deleteBuffer(tmpname);
 }
 void homo::Grid_H::enforce_unit_macro_strain(int istrain)
 {
@@ -1386,14 +1405,12 @@ void homo::Grid_H::restrict_stencil(void)
 	{
 		// give the true value to gpu vector
 		useGrid_g();
-
 		size_t grid_size, block_size;
 		for (int i = 0; i < 27; i++) {
 			cudaMemset(stencil_g[i], 0, sizeof(VT) * n_gsvertices());
 		}
 		cudaDeviceSynchronize();
 		cuda_error_check;
-		int ne = fine->cellReso[0] * fine->cellReso[1] * fine->cellReso[2];
 		int ne_block = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER;
 
 		int blockx, blocky, blockz;

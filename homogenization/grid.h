@@ -17,7 +17,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 128
+#define MIN_TRANSFER 64
 
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
@@ -348,6 +348,7 @@ struct Grid_H {
 
 	void pad_vertex_data(float* v[1]);
 	void pad_vertex_data(half* v[1]);
+	void pad_vertex_data_host(std::vector<float>& v);
 
 	void pad_cell_data(float* e);
 	void pad_cell_data(half* e);

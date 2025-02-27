@@ -245,11 +245,10 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	// judge whether to use host memory
 	use_host_memory = (cellReso[0] > MIN_TRANSFER);
 	if (use_host_memory){
-		int total_nv = (cellReso[0]/MIN_TRANSFER * cellReso[1]/MIN_TRANSFER * cellReso[2]/MIN_TRANSFER) * pow(MIN_TRANSFER+3, 3);
+		int total_nv = (cellReso[0]/MIN_TRANSFER * cellReso[1]/MIN_TRANSFER * cellReso[2]/MIN_TRANSFER) * nv;
 		// the total data
 		u_h.resize(total_nv, 0);
 		f_h.resize(total_nv, 0);
-		// maybe r_h is not necessary?
 		r_h.resize(total_nv, 0);
 		// the block used on device
 		u_g[0] = getMem().addBuffer(homoutils::formated("%s_u_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
@@ -325,7 +324,7 @@ void Grid_H::useFchar(int k)
 		// todo
 		enforce_unit_macro_strain_host(k);
 		// padding by host function
-		//pad_vertex_data_host(f_h);
+		pad_vertex_data_host(f_h);
 	}
 	else {
 		enforce_unit_macro_strain(k);
@@ -335,6 +334,77 @@ void Grid_H::useFchar(int k)
 		char buf[100];
 		sprintf_s(buf, "./fchar%d", k);
 		v_write(buf, f_g[0], true);
+	}
+}
+
+inline int lexi2gs(int lexpos[3], int gsreso[3][8], int gsend[8], bool padded = false) {
+	int pos[3] = { lexpos[0], lexpos[1], lexpos[2] };
+	if (!padded) {
+		pos[0] += 1; pos[1] += 1; pos[2] += 1;
+	}
+	int org[3] = { pos[0] % 2, pos[1] % 2, pos[2] % 2 };
+	int gscolor = org[0] + org[1] * 2 + org[2] * 4;
+	pos[0] /= 2; pos[1] /= 2; pos[2] /= 2;
+	int gsid = (gscolor == 0 ? 0 : gsend[gscolor - 1]) +
+		pos[0] +
+		pos[1] * gsreso[0][gscolor] +
+		pos[2] * gsreso[0][gscolor] * gsreso[1][gscolor];
+	return gsid;
+}
+void Grid_H::pad_vertex_data_host(std::vector<float>& vec) {
+	int off_set = 0;
+	// for each block init block
+	int block_numx = (cellReso[0] / MIN_TRANSFER);
+	int block_numy = (cellReso[1] / MIN_TRANSFER);
+	int block_numz = (cellReso[2] / MIN_TRANSFER);
+
+	int block_num = block_numx * block_numy * block_numz;
+	int block_len = n_gscells();
+
+	for (int block_id = 0; block_id < block_num; block_id++) {
+		off_set = block_len * block_id;
+		int off_setx = block_id % block_numx, off_sety = block_id / block_numx % block_numy, off_setz = block_id / (block_numx * block_numy);
+		// k = 0
+		int tox, toy, toz;
+		int ti, tj, tk;
+		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
+			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+					if (!(i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2)) {
+						continue;
+					}
+					if (i == 0) {
+						tox = (off_setx - 1 + block_numx) % block_numx;
+						ti = MIN_TRANSFER + 1;
+					}
+					else if (i == MIN_TRANSFER + 2) {
+						tox = (off_setx + 1 + block_numx) % block_numx;
+						ti = 1;
+					}
+					if (j == 0) {
+						toy = (off_sety - 1 + block_numy) % block_numy;
+						tj = MIN_TRANSFER + 1;
+					}
+					else if (j == MIN_TRANSFER + 2) {
+						toy = (off_sety + 1 + block_numy) % block_numy;
+						tj = 1;
+					}
+					if (k == 0) {
+						toz = (off_setz - 1 + block_numz) % block_numz;
+						tk = MIN_TRANSFER + 1;
+					}
+					else if (k == MIN_TRANSFER + 2) {
+						toz = (off_setz + 1 + block_numz) % block_numz;
+						tk = 1;
+					}
+					int posid[3] = {i, j, k};
+					int id = off_set + lexi2gs(posid, gsVertexReso, gsVertexSetEnd);
+					int postid[3] = { ti, tj, tk };
+					int tid = (tox + toy * block_numx + toz * block_numx * block_numy) * block_len + lexi2gs(postid, gsVertexReso, gsVertexSetEnd);
+					vec[id] = vec[tid];
+				}
+			}
+		}
 	}
 }
 
