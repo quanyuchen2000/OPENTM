@@ -406,15 +406,6 @@ __global__ void restrict_stencil_aos_kernel_1_H(
 	}
 }
 
-void homo::Grid_H::vector2rho(int blockx, int blocky, int blockz, VT* tmp) {
-	int blocksize = MIN_TRANSFER;
-	int bresox = cellReso[0]/blocksize, bresoy = cellReso[1]/blocksize, bresoz = cellReso[2]/blocksize;
-	int offset = (blockx + bresox * blocky + bresox * bresoy * blockz) * pow(MIN_TRANSFER + 2, 3);
-	// set a temp rho for data
-	cudaMemcpy(tmp, rho_h->data() + offset, pow(MIN_TRANSFER + 2, 3) * sizeof(VT), cudaMemcpyHostToDevice);
-	update_host(tmp);
-};
-
 template __global__ void restrict_stencil_otf_aos_kernel_1_H<half>(int nv, half* rholist, CellFlags* eflags, VertexFlags* vflags);
 template __global__ void restrict_stencil_otf_aos_kernel_1_H<float>(int nv, float* rholist, CellFlags* eflags, VertexFlags* vflags);
 template __global__ void restrict_stencil_otf_aos_kernel_alter_H<float>(int ne, float* rholist, CellFlags* eflags, VertexFlags* vflags);

@@ -61,12 +61,18 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 
 		for (int i = 0; i < block_num; i++) {
 			// give in rho_g u_g
+			grids[0]->use_block_rho(i);
+			grids[0]->use_block_u_g(i);
+			grids[0]->use_block_f_g(i);
 			grids[0]->gs_relaxation(w_SOR);
+			grids[0]->write_block_u_g(i);
 			// u_g out to u_h
 		}
 	}
 	for (int i = 1; i < grids.size(); i++) {
 		if (i == 1) {
+			grids[0]->update_residual();
+			grids[1]->restrict_residual();
 		}
 		else {
 			grids[i - 1]->update_residual();

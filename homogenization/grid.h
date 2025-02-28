@@ -240,13 +240,12 @@ struct Grid_H {
 
 	void gs_relaxation(float w_SOR = 1.f, int times_ = 1);
 
-	//void gs_relaxation_ex(float w_SOR = 1.f);
-
-	//void update_residual_ex();
-
-	//void gs_relaxation_profile(float w_SOR = 1.f);
-
-	//void update_residual_profile(void);
+	// used to transfer data between host and device
+	void use_block_rho(int blockid);
+	void use_block_u_g(int blockid);
+	void use_block_f_g(int blockid);
+	void write_block_u_g(int blockid);
+	void write_block_f_g(int blockid);
 
 	float diagPrecondition(float strength);
 
@@ -357,8 +356,8 @@ struct Grid_H {
 	void testIndexer(void);
 	void testVflags(void);
 
-	// used to transfer data between host and device
-	void vector2rho(int blockx, int blocky, int blockz, VT* tmp);
+
+
 private:
 	// return nv, ne
 	std::pair<int, int> countGS(void);
