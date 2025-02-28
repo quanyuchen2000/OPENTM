@@ -1045,8 +1045,8 @@ void homo::Grid_H::gs_relaxation(float w_SOR /*= 1.f*/, int times_ /*= 1*/)
 			cuda_error_check;
 			//enforce_period_boundary(u_g);
 		}
+		enforce_period_boundary(u_g);
 	}
-	enforce_period_boundary(u_g);
 	cudaDeviceSynchronize();
 	cuda_error_check;
 }
