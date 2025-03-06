@@ -3,6 +3,7 @@
 #include "AutoDiff/AutoDiff.h"
 #include <fstream>
 #include "homogenization.h"
+#include <chrono>
 
 namespace homo {
 
@@ -93,7 +94,9 @@ namespace homo {
 					for (int j = 0; j < 3; j++)
 						gradH_[i][j] = 0;
 				densityField.eval();
+
 				domain_.update(densityField.value().data(), densityField.value().view().getPitchT());
+
 				domain_.heatMatrix(H_);
 				expired = false;
 			}
@@ -176,7 +179,11 @@ namespace homo {
 				for (int i = 0; i < 3; i++)
 					for (int j = 0; j < 3; j++)
 						gradH_[i][j] = 0;
+				auto start = std::chrono::high_resolution_clock::now();
 				domain_.update_Host(*densityField);
+				auto end = std::chrono::high_resolution_clock::now();
+				auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+				printf("use time: %d ms", duration.count());
 				domain_.heatMatrix(H_);
 				expired = false;
 			}

@@ -12,12 +12,12 @@
 #include <numeric>
 #include <iostream>
 #include <stdint.h>
-#include "gmem/DeviceBuffer.h"
+#include "gmem/DeviceBuffer.h" 
 #include <Eigen/Sparse>
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 64
+#define MIN_TRANSFER 32
 
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
@@ -239,25 +239,32 @@ struct Grid_H {
 	void assembleHostMatrix(void);
 
 	void gs_relaxation(float w_SOR = 1.f, int times_ = 1);
+	void gs_relaxation_host(int blockid, float w_SOR = 1.f, int times_ = 1);
 
 	// used to transfer data between host and device
 	void use_block_rho(int blockid);
 	void use_block_u_g(int blockid);
+	void use_block_r_g(int blockid);
 	void use_block_f_g(int blockid);
 	void write_block_u_g(int blockid);
 	void write_block_f_g(int blockid);
-
+	void write_block_r_g(int blockid);
 	float diagPrecondition(float strength);
 
 	void prolongate_correction(void);
+	void prolongate_correction(int blockid);
 
 	void restrict_residual(void);
+
+	void restrict_residual(int blockid);
 
 	void restrict_stencil(void);
 
 	void restrict_stencil_arround_dirichelt_boundary(void);
 
 	void update_residual(void);
+
+	void update_residual_host(int blockid);
 
 	void enforce_unit_macro_strain(int istrain);
 
@@ -298,6 +305,8 @@ struct Grid_H {
 	void getGsElementPos(std::vector<int> pos[3]);
 
 	void writeGsVertexPos(const std::string& fname);
+
+	void writeStencil();
 
 	void writeDensity(const std::string& fname, VoxelIOFormat frmat);
 
@@ -344,6 +353,7 @@ struct Grid_H {
 	void enforce_period_vertex(double* v[1], bool additive = false);
 	void enforce_period_vertex(half* v[1], bool additive = false);
 	void enforce_period_vertex(float* v[1], bool additive = false);
+	void enforce_vertex_boundary(std::vector<VT>& v);
 
 	void pad_vertex_data(float* v[1]);
 	void pad_vertex_data(half* v[1]);

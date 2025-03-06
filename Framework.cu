@@ -247,7 +247,8 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 		else {
 			rho_H.value().fromHost(rho0[0]);
 		}
-		auto rhop_H = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3) * (config.heatRatio[0] - config.heatRatio[1]) + config.heatRatio[1];
+		// auto rhop_H = rho_H.conv(radial_convker_t<float, Spline4>(1.5, 0)).pow(3) * (config.heatRatio[0] - config.heatRatio[1]) + config.heatRatio[1];
+		auto rhop_H = rho_H.pow(3) * (config.heatRatio[0] - config.heatRatio[1]) + config.heatRatio[1];
 		heat_tensor_t <float, decltype(rhop_H)> Hh(hom_H, rhop_H);
 		//auto objective = ((Hh(0, 0) - tt[0]).abs() + (Hh(1, 1) - tt[1]).abs() +
 		//	(Hh(2, 2) - tt[2]).abs() + (Hh(0, 1) - tt[3]).abs() +

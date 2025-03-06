@@ -56,18 +56,6 @@ __constant__ float* guchar[3];
 __constant__ float exp_penal[1];
 
 
-extern __global__ void gs_relaxation_otf_kernel_opt(
-	int gs_set, float* rholist,
-	devArray_t<int, 3> gridCellReso,
-	VertexFlags* vflags, CellFlags* eflags,
-	float w = 1.f);
-
-extern __global__ void update_residual_otf_kernel_opt(
-	int nv, float* rholist,
-	devArray_t<int, 3> gridCellReso,
-	VertexFlags* vflags, CellFlags* eflags,
-	float diag_strength
-);
 template<typename T>
 __global__ void restrict_stencil_otf_aos_kernel_1_H(
 	int ne, T* rholist, CellFlags* eflags, VertexFlags* vflags
@@ -288,7 +276,17 @@ void homo::Grid_H::setFlags_g(void)
 	cudaMemset(vflag, 0, sizeof(VertexFlags) * n_gsvertices());
 	cudaMemset(eflag, 0, sizeof(CellFlags) * n_gscells());
 	cuda_error_check;
-	devArray_t<int, 3> ereso{ cellReso[0],cellReso[1],cellReso[2] };
+	devArray_t<int, 3> ereso;
+	if (!use_host_memory) {
+		for (auto i : { 0, 1, 2 }) {
+			ereso[i] = cellReso[i];
+		}
+	}
+	else {
+		for (auto i : { 0, 1, 2 }) {
+			ereso[i] = MIN_TRANSFER;
+		}
+	}
 	devArray_t<int, 8> vGsend, vGsvalid;
 	devArray_t<int, 8> eGsend, eGsvalid;
 	for (int i = 0; i < 8; i++) {
@@ -328,6 +326,7 @@ void homo::Grid_H::use_block_rho(int blockid) {
 	// set a temp rho for data
 	cudaMemcpy(tmp, rho_h->data() + offset, pow(MIN_TRANSFER + 2, 3) * sizeof(VT), cudaMemcpyHostToDevice);
 	update_host(tmp);
+	getMem().deleteBuffer(tmp);
 	cuda_error_check;
 }
 
@@ -343,6 +342,29 @@ void homo::Grid_H::use_block_u_g(int blockid) {
 	cuda_error_check;
 }
 
+void homo::Grid_H::write_block_u_g(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
+	cudaMemcpy(u_h.data() + offset, u_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
+}
+
+void homo::Grid_H::use_block_r_g(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	int offset = (bx + blockx * by + blockx * blocky * bz) * n_gsvertices();
+	cudaMemcpy(r_g[0], r_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice);
+	cuda_error_check;
+}
+
 void homo::Grid_H::use_block_f_g(int blockid) {
 	int blockx, blocky, blockz;
 	blockx = cellReso[0] / MIN_TRANSFER;
@@ -355,17 +377,6 @@ void homo::Grid_H::use_block_f_g(int blockid) {
 	cuda_error_check;
 }
 
-void homo::Grid_H::write_block_u_g(int blockid) {
-	int blockx, blocky, blockz;
-	blockx = cellReso[0] / MIN_TRANSFER;
-	blocky = cellReso[1] / MIN_TRANSFER;
-
-	int bx = blockid % blockx;
-	int by = (blockid / blockx) % blocky;
-	int bz = blockid / (blockx * blocky);
-	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
-	cudaMemcpy(u_h.data() + offset, u_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
-}
 
 void homo::Grid_H::write_block_f_g(int blockid) {
 	int blockx, blocky, blockz;
@@ -379,6 +390,17 @@ void homo::Grid_H::write_block_f_g(int blockid) {
 	cudaMemcpy(f_h.data() + offset, f_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
 }
 
+void homo::Grid_H::write_block_r_g(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
+	cudaMemcpy(r_h.data() + offset, r_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
+}
 
 // map 32 vertices to 8 warp
 template<typename T, int BlockSize = 32 * 8>
@@ -396,16 +418,10 @@ __global__ void gs_relaxation_otf_kernel_H(
 	__shared__ int gsCellEnd[8];
 	__shared__ int gsVertexEnd[8];
 
-
 	__shared__ float KE[8][8];
-	//#endif
 
 	__shared__ float sumKeU[4][32];
 	__shared__ float sumKs[4][32];
-
-	//__shared__ double* U[3];
-
-	//__shared__ int NeNv[8][8];
 
 	initSharedMem(&sumKeU[0][0], sizeof(sumKeU) / sizeof(float));
 	initSharedMem(&sumKs[0][0], sizeof(sumKs) / sizeof(float));
@@ -427,14 +443,7 @@ __global__ void gs_relaxation_otf_kernel_H(
 
 	bool fiction = false;
 
-	//#if USE_LAME_MATRIX
-	//	// load Lame matrix
-	//	loadLameMatrix(KLAME);
-	//#else
-		// load template matrix
-	//#endif
-
-		// load cell and vertex reso
+    // load cell and vertex reso
 	constant2DToShared(gGsCellReso, gsCellReso);
 	constant2DToShared(gGsVertexReso, gsVertexReso);
 	constantToShared(gGsCellEnd, gsCellEnd);
@@ -457,8 +466,6 @@ __global__ void gs_relaxation_otf_kernel_H(
 
 	float KeU = { 0. };
 	float Ks = { 0. };
-
-	//fiction |= vflag.is_max_boundary();
 
 	if (!fiction && !vflag.is_period_padding()) {
 		int elementId = indexer.neighElement(warpId, gsCellEnd, gsCellReso).getId();
@@ -535,15 +542,14 @@ __global__ void gs_relaxation_otf_kernel_H(
 		gU_H[0][vid] = u;
 	}
 }
-
-
 // map 32 vertices to 8 warp
 template<typename T, int BlockSize = 32 * 8>
-__global__ void gs_relaxation_otf_kernel(
+__global__ void gs_relaxation_otf_kernel_host_H(
 	int gs_set, T* rholist,
 	devArray_t<int, 3> gridCellReso,
 	VertexFlags* vflags, CellFlags* eflags,
 	// SOR relaxing factor
+	int bx, int by, int bz,
 	float w = 1.f,
 	float diag_strength = 0
 ) {
@@ -553,56 +559,38 @@ __global__ void gs_relaxation_otf_kernel(
 	__shared__ int gsCellEnd[8];
 	__shared__ int gsVertexEnd[8];
 
-//#if USE_LAME_MATRIX
-//	__shared__ Lame KLAME[24][24];
-//#else
-	//__shared__ float KE[24][24];
-	__shared__ float KE[24][24];
-//#endif
+	__shared__ float KE[8][8];
 
-	__shared__ float sumKeU[3][4][32];
-	__shared__ float sumKs[9][4][32];
+	__shared__ float sumKeU[4][32];
+	__shared__ float sumKs[4][32];
 
-	//__shared__ double* U[3];
-
-	//__shared__ int NeNv[8][8];
-
-	initSharedMem(&sumKeU[0][0][0], sizeof(sumKeU) / sizeof(float));
-	initSharedMem(&sumKs[0][0][0], sizeof(sumKs) / sizeof(float));
+	initSharedMem(&sumKeU[0][0], sizeof(sumKeU) / sizeof(float));
+	initSharedMem(&sumKs[0][0], sizeof(sumKs) / sizeof(float));
 
 	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-
+	//if (tid == 0) {
+	for (int i = 0; i < 4; i++)
+	{
+		for (int j = 0; j < 32; j++)
+			sumKeU[i][j] += 1;
+	}
+	//}
 	int warpId = threadIdx.x / 32;
 	int laneId = threadIdx.x % 32;
 
-//	if (laneId < 1) {
-//#pragma unroll
-//		for (int i = 0; i < 8; i++) {
-//			NeNv[warpId][i] = (warpId % 2 + i % 2) +
-//				(warpId / 2 % 2 + i / 2 % 2) * 3 +
-//				(warpId / 4 + i / 4) * 9;
-//		}
-//	}
 
 	// local vertex id in gs set
 	int vid = blockIdx.x * 32 + laneId;
 
 	bool fiction = false;
 
-//#if USE_LAME_MATRIX
-//	// load Lame matrix
-//	loadLameMatrix(KLAME);
-//#else
-	// load template matrix
-//#endif
-
 	// load cell and vertex reso
 	constant2DToShared(gGsCellReso, gsCellReso);
 	constant2DToShared(gGsVertexReso, gsVertexReso);
 	constantToShared(gGsCellEnd, gsCellEnd);
 	constantToShared(gGsVertexEnd, gsVertexEnd);
-	//constantToShared(gU, U);
-	loadTemplateMatrix(KE);
+
+	loadTemplateMatrix_H(KE);
 
 	// to global vertex id
 	vid = gs_set == 0 ? vid : gsVertexEnd[gs_set - 1] + vid;
@@ -610,21 +598,20 @@ __global__ void gs_relaxation_otf_kernel(
 	if (vid >= gsVertexEnd[gs_set]) fiction = true;
 
 	GridVertexIndex indexer(gridCellReso[0], gridCellReso[1], gridCellReso[2]);
+
 	VertexFlags vflag;
 	if (!fiction) {
 		vflag = vflags[vid];
 		fiction = fiction || vflag.is_fiction();
 		indexer.locate(vid, vflag.get_gscolor(), gsVertexEnd);
 	}
-	
-	float KeU[3] = { 0. };
-	float Ks[3][3] = { 0.f };
 
-	//fiction |= vflag.is_max_boundary();
+	float KeU = { 0. };
+	float Ks = { 0. };
 
 	if (!fiction && !vflag.is_period_padding()) {
 		int elementId = indexer.neighElement(warpId, gsCellEnd, gsCellReso).getId();
-		int vselfrow = (7 - warpId) * 3;
+		int vselfrow = (7 - warpId);
 		float rho_penal = 0;
 		CellFlags eflag;
 		float penal = exp_penal[0];
@@ -637,137 +624,70 @@ __global__ void gs_relaxation_otf_kernel(
 #pragma unroll
 			for (int i = 0; i < 8; i++) {
 				if (i == 7 - warpId) continue;
-//#if 0
+				//#if 0
 				int vneigh =
 					(warpId % 2 + i % 2) +
 					(warpId / 2 % 2 + i / 2 % 2) * 3 +
 					(warpId / 4 + i / 4) * 9;
-//#else
-//				int vneigh = NeNv[warpId][i];
-//#endif
 				int vneighId = indexer.neighVertex(vneigh, gsVertexEnd, gsVertexReso).getId();
 				VertexFlags nvflag;
 				if (vneighId != -1) {
 					nvflag = vflags[vneighId];
-					//{
-					//	int pn[3];
-					//	auto p = indexer.getPos();
-					//	p.x -= 1; p.y -= 1; p.z -= 1;
-					//	gsid2pos(vneighId, nvflag.get_gscolor(), gsVertexReso, gsVertexEnd, pn);
-					//	if (abs(pn[0] - p.x) >= 2 || abs(pn[1] - p.y) >= 2 || abs(pn[2] - p.z) >= 2) {
-					//		printf("E%d, vid = %d, neigh = %d, neighid = %d\n", __LINE__, vid, vneigh, vneighId);
-					//	}
-					//}
 					if (!nvflag.is_fiction()) {
-						float u[3] = { gU[0][vneighId], gU[1][vneighId], gU[2][vneighId] };
-						if (nvflag.is_dirichlet_boundary()) {
-							u[0] = u[1] = u[2] = 0;
+						float u = { gU_H[0][vneighId] };
+						if ((bx == 0 && (nvflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (nvflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (nvflag.flagbits & DOWN_BOUNDARY))) {
+							u = 0;
 						}
-#if 0
-						for (int k3row = 0; k3row < 3; k3row++) {
-							for (int k3col = 0; k3col < 3; k3col++) {
-								KeU[k3row] += KE[vselfrow + k3row][i * 3 + k3col] * u[k3col] /** rho_penal*/;
-							}
-						}
-#else
-						int colsel = i * 3;
-						KeU[0] += KE[vselfrow][colsel] * u[0] + KE[vselfrow][colsel + 1] * u[1] + KE[vselfrow][colsel + 2] * u[2];
-						KeU[1] += KE[vselfrow + 1][colsel] * u[0] + KE[vselfrow + 1][colsel + 1] * u[1] + KE[vselfrow + 1][colsel + 2] * u[2];
-						KeU[2] += KE[vselfrow + 2][colsel] * u[0] + KE[vselfrow + 2][colsel + 1] * u[1] + KE[vselfrow + 2][colsel + 2] * u[2];
-#endif
+						KeU += KE[vselfrow][i] * u;
 					}
 				}
 			}
-			KeU[0] *= rho_penal; KeU[1] *= rho_penal; KeU[2] *= rho_penal;
-
-			for (int k3row = 0; k3row < 3; k3row++) {
-				for (int k3col = 0; k3col < 3; k3col++) {
-					Ks[k3row][k3col] += float(KE[vselfrow + k3row][vselfrow + k3col]) * rho_penal;
-				}
-			}
-
-			//if (diag_strength) {
-			//	Ks[0][0] += diag_strength;
-			//	Ks[1][1] += diag_strength;
-			//	Ks[2][2] += diag_strength;
-			//}
+			KeU *= rho_penal;
+			Ks += float(KE[vselfrow][vselfrow]) * rho_penal;
 		}
 	}
 
 	if (warpId >= 4) {
-//#pragma unroll
-		for (int i = 0; i < 3; i++) {
-//#pragma unroll
-			for (int j = 0; j < 3; j++) {
-				sumKs[i * 3 + j][warpId - 4][laneId] = Ks[i][j];
-			}
-			sumKeU[i][warpId - 4][laneId] = KeU[i];
-		}
-		
+		sumKs[warpId - 4][laneId] = Ks;
+		sumKeU[warpId - 4][laneId] = KeU;
 	}
 	__syncthreads();
 
 	if (warpId < 4) {
-//#pragma unroll
-		for (int i = 0; i < 3; i++) {
-//#pragma unroll
-			for (int j = 0; j < 3; j++) {
-				sumKs[i * 3 + j][warpId][laneId] += Ks[i][j];
-			}
-			sumKeU[i][warpId][laneId] += KeU[i];
-		}
+		sumKs[warpId][laneId] += Ks;
+		sumKeU[warpId][laneId] += KeU;
 	}
 	__syncthreads();
 
 	if (warpId < 2) {
-//#pragma unroll
-		for (int i = 0; i < 3; i++) {
-//#pragma unroll
-			for (int j = 0; j < 3; j++) {
-				 sumKs[i * 3 + j][warpId][laneId] += sumKs[i * 3 + j][warpId + 2][laneId];
-			}
-			sumKeU[i][warpId][laneId] += sumKeU[i][warpId + 2][laneId];
-		}
+		sumKs[warpId][laneId] += sumKs[warpId + 2][laneId];
+		sumKeU[warpId][laneId] += sumKeU[warpId + 2][laneId];
 	}
 	__syncthreads();
 
 	if (warpId < 1 && !vflag.is_period_padding() && !fiction) {
-//#pragma unroll
-		for (int i = 0; i < 3; i++) {
-//#pragma unroll
-			for (int j = 0; j < 3; j++) {
-				Ks[i][j] = sumKs[i * 3 + j][warpId][laneId] + sumKs[i * 3 + j][warpId + 1][laneId];
-			}
-			KeU[i] = sumKeU[i][warpId][laneId] + sumKeU[i][warpId + 1][laneId];
-		}
+		Ks = sumKs[warpId][laneId] + sumKs[warpId + 1][laneId];
+		KeU = sumKeU[warpId][laneId] + sumKeU[warpId + 1][laneId];
 
-		// DEBUG
-		//if (vid == 394689) {
-		//	printf("ku = (%.4le, %.4le, %.4le)\n", KeU[0], KeU[1], KeU[2]);
-		//}
-
-		float u[3] = { gU[0][vid],gU[1][vid],gU[2][vid] };
+		float u = { gU_H[0][vid] };
 
 		// relax
 #if !USING_SOR 
-		u[0] = (gF[0][vid] - KeU[0] - Ks[0][1] * u[1] - Ks[0][2] * u[2]) / Ks[0][0];
-		u[1] = (gF[1][vid] - KeU[1] - Ks[1][0] * u[0] - Ks[1][2] * u[2]) / Ks[1][1];
-		u[2] = (gF[2][vid] - KeU[2] - Ks[2][0] * u[0] - Ks[2][1] * u[1]) / Ks[2][2];
+		u = (gF_H[vid] - KeU) / Ks;
 #else
-		u[0] = w * (float(gF[0][vid]) - KeU[0] - Ks[0][1] * u[1] - Ks[0][2] * u[2]) / Ks[0][0] + (float(1) - w) * u[0];
-		u[1] = w * (float(gF[1][vid]) - KeU[1] - Ks[1][0] * u[0] - Ks[1][2] * u[2]) / Ks[1][1] + (float(1) - w) * u[1];
-		u[2] = w * (float(gF[2][vid]) - KeU[2] - Ks[2][0] * u[0] - Ks[2][1] * u[1]) / Ks[2][2] + (float(1) - w) * u[2];
+		u = w * (gF_H[0][vid] - KeU) / Ks + (float(1) - w) * u;
 #endif
 
 		// if dirichlet boundary;
-		if (vflag.is_dirichlet_boundary()) { u[0] = u[1] = u[2] = 0; }
+		if ((bx == 0 && (vflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (vflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (vflag.flagbits & DOWN_BOUNDARY))) {
+			//auto pos = indexer.getPos();
+			//printf("pos is:(%d, %d, %d)\n", pos.x, pos.y, pos.z);
+			u = 0;
+		}
 		// update
-		gU[0][vid] = u[0];
-		gU[1][vid] = u[1];
-		gU[2][vid] = u[2];
+		gU_H[0][vid] = u;
 	}
 }
-
 
 // map 32 vertices to 13 warp
 template<int BlockSize = 32 * 13>
@@ -943,6 +863,113 @@ __global__ void restrict_residual_kernel_H(
 	}
 }
 
+template<int BlockSize = 256>
+__global__ void restrict_residual_kernel_host_H(
+	int nv_fine,
+	VertexFlags* vflags,
+	VertexFlags* vfineflags,
+	devArray_t<int, 8> GsVertexEnd,
+	devArray_t<int, 8> GsFineVertexEnd,
+	int bx, int by, int bz
+) {
+	__shared__ int gsVertexEnd[8];
+	__shared__ int gsFineVertexEnd[8];
+	__shared__ int gsFineVertexReso[3][8];
+
+	if (threadIdx.x < 24) {
+		gsFineVertexReso[threadIdx.x / 8][threadIdx.x % 8] =
+			gGsFineVertexReso[threadIdx.x / 8][threadIdx.x % 8];
+		if (threadIdx.x < 8) {
+			gsVertexEnd[threadIdx.x] = GsVertexEnd[threadIdx.x];
+			gsFineVertexEnd[threadIdx.x] = GsFineVertexEnd[threadIdx.x];
+		}
+	}
+	__syncthreads();
+
+	size_t tid = blockDim.x * blockIdx.x + threadIdx.x;
+	if (tid >= nv_fine) return;
+
+	VertexFlags vflag = vfineflags[tid];
+	bool fiction = vflag.is_fiction();
+
+	int setid = vflag.get_gscolor();
+
+	GridVertexIndex indexer(MIN_TRANSFER, MIN_TRANSFER, MIN_TRANSFER);
+	indexer.locate(tid, vflag.get_gscolor(), gsFineVertexEnd);
+	short3 pos = indexer.getPos();
+
+	int coarseRatio[3] = { gUpCoarse[0], gUpCoarse[1], gUpCoarse[2] };
+	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
+
+	float r = { 0. };
+	int bid[3] = { bx, by, bz };
+	if (!fiction && !vflag.is_period_padding()) {
+		for (int offx = -coarseRatio[0] + 1; offx < coarseRatio[0]; offx++) {
+			for (int offy = -coarseRatio[1] + 1; offy < coarseRatio[1]; offy++) {
+				for (int offz = -coarseRatio[2] + 1; offz < coarseRatio[2]; offz++) {
+					// for reso == 32 pos is from 1 to 33
+					int off_pos[3] = { pos.x + offx - 1, pos.y + offy - 1, pos.z + offz - 1 };
+					// check if off_pos reffer to a coarse vertex
+					// if no referred skip
+					if (off_pos[0] % coarseRatio[0] == 0 && off_pos[1] % coarseRatio[1] == 0 && off_pos[2] % coarseRatio[2] == 0) {
+						// weight is still the same
+						float w = (coarseRatio[0] - abs(offx)) * (coarseRatio[1] - abs(offy)) * (coarseRatio[2] - abs(offz)) / pr;
+						// add to that gF_H
+						// coarse pos block:
+						int c_pos[3] = { off_pos[0] / coarseRatio[0], off_pos[1] / coarseRatio[1], off_pos[2] / coarseRatio[2] };
+						// true coarse pos by adding block
+						int c_true_pos[3];
+						for (int pos_idx = 0; pos_idx < 3; pos_idx++) {
+							c_true_pos[pos_idx] = (MIN_TRANSFER / coarseRatio[pos_idx]) * bid[pos_idx] + c_pos[pos_idx];
+						}
+						// printf("fine pos: (%d, %d, %d) coarse pos:(%d, %d, %d)\n",pos.x, pos.y, pos.z, c_true_pos[0], c_true_pos[1], c_true_pos[2]);
+						// coarse pos to coarse tid
+						int coarse_lexi = lexi2gs(c_true_pos, gGsVertexReso, gGsVertexEnd);
+						atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w);
+						// because of the period condition, it should contribute to all reflect boundary if it's not on
+						// a boundary and contribute to any boundary
+						if (pos.x - 1 == 0 || pos.x - 1 == MIN_TRANSFER || pos.y - 1 == 0 || pos.y - 1 == MIN_TRANSFER || pos.z - 1 == 0 || pos.z - 1 == MIN_TRANSFER) {
+							continue;
+						}
+						int reflect[3];
+						int xprepare[2] = { c_true_pos[0], -1 };
+						int yprepare[2] = { c_true_pos[1], -1 };
+						int zprepare[2] = { c_true_pos[2], -1 };
+
+						if (c_true_pos[0] == 0 && pos.x != 1) {
+							xprepare[1] = gGridCellReso[0];
+						}
+						if (c_true_pos[0] == gGridCellReso[0] && pos.x != MIN_TRANSFER + 1) {
+							xprepare[1] = 0;
+						}
+						if (c_true_pos[1] == 0 && pos.y != 1) {
+							yprepare[1] = gGridCellReso[1];
+						}
+						if (c_true_pos[1] == gGridCellReso[1] && pos.y != MIN_TRANSFER + 1) {
+							yprepare[1] = 0;
+						}
+						if (c_true_pos[2] == 0 && pos.z != 1) {
+							zprepare[1] = gGridCellReso[2];
+						}
+						if (c_true_pos[2] == gGridCellReso[2] && pos.z != MIN_TRANSFER + 1) {
+							zprepare[1] = 0;
+						}
+						for (int i = 0; i < 8; i++) {
+							int idx = i % 2;
+							int idy = i / 2 % 2;
+							int idz = i / 4;
+							if (xprepare[idx] != -1 && yprepare[idy] != -1 && zprepare[idz] != -1) {
+								reflect[0] = xprepare[idx]; reflect[1] = yprepare[idy]; reflect[2] = zprepare[idz];
+								int coarse_lexi = lexi2gs(reflect, gGsVertexReso, gGsVertexEnd);
+								atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
 
 template<int BlockSize = 256>
 __global__ void prolongate_correction_kernel_H(
@@ -1004,7 +1031,114 @@ __global__ void prolongate_correction_kernel_H(
 		gU_H[0][tid] += VT(u);
 	}
 }
+template<int BlockSize = 256>
+__global__ void prolongate_correction_kernel_host_H(
+	bool is_root,
+	int nv_fine,
+	VertexFlags* vflags,
+	VertexFlags* vcoarseflags,
+	devArray_t<int, 8> GsVertexEnd,
+	devArray_t<int, 8> GsCoarseVertexEnd,
+	int bx, int by, int bz
+) {
+	__shared__ int coarseRatio[3];
+	__shared__ int gsCoarseVertexReso[3][8];
+	__shared__ int gsCoarseVertexEnd[8];
 
+	if (threadIdx.x < 24) {
+		gsCoarseVertexReso[threadIdx.x / 8][threadIdx.x % 8] = gGsCoarseVertexReso[threadIdx.x / 8][threadIdx.x % 8];
+	}
+	if (threadIdx.x < 8) {
+		gsCoarseVertexEnd[threadIdx.x] = GsCoarseVertexEnd[threadIdx.x];
+	}
+	if (threadIdx.x < 3) {
+		coarseRatio[threadIdx.x] = gDownCoarse[threadIdx.x];
+	}
+	__syncthreads();
+	// tid is for fine vertex index
+	// so to change it to cpu version, we need to find the right coarse reference
+	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+	bool fiction = false;
+	if (tid >= nv_fine) {
+		return;
+	}
+
+	VertexFlags vflag = vflags[tid];
+	fiction = fiction || vflag.is_fiction();
+
+	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
+
+	bool isRoot = is_root;
+
+	if (!fiction && !vflag.is_period_padding()) {
+		GridVertexIndex indexer(MIN_TRANSFER, MIN_TRANSFER, MIN_TRANSFER);
+		indexer.locate(tid, vflag.get_gscolor(), GsVertexEnd._data);
+
+		float u = { 0. };
+
+		// originally here use neighCoarseVertex
+		// however it's a little tedious to change the interface
+		// we copy it and do it by hand
+		int nvCoarse[8];
+		float w[8];
+		int remainder[3];
+
+		short3 pos;
+		pos = indexer.getPos();
+		pos.x -= 1;
+		pos.y -= 1;
+		pos.z -= 1;
+
+		if (pos.x < 0 || pos.y < 0 || pos.z < 0) {
+			printf("pos is: (%d, %d, %d)", pos.x, pos.y, pos.z);
+		};
+
+		remainder[0] = pos.x % coarseRatio[0];
+		remainder[1] = pos.y % coarseRatio[1];
+		remainder[2] = pos.z % coarseRatio[2];
+
+		short3 coarseBase{ pos.x / coarseRatio[0] + bx * (MIN_TRANSFER / coarseRatio[0]),
+			pos.y / coarseRatio[1] + by * (MIN_TRANSFER / coarseRatio[1]),
+			pos.z / coarseRatio[2] + bz * (MIN_TRANSFER / coarseRatio[2])};
+		// printf("coarseBase is:(%d, %d, %d)", coarseBase.x, coarseBase.y, coarseBase.z);
+		float wc = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
+
+		for (int id = 0; id < 8; id++) {
+			short3 idoffCoarse = { id % 2, id / 2 % 2, id / 4 };
+			short3 idOff = { idoffCoarse.x * coarseRatio[0], idoffCoarse.y * coarseRatio[1], idoffCoarse.z * coarseRatio[2] };
+			w[id] = (coarseRatio[0] - abs(idOff.x - remainder[0])) *
+				(coarseRatio[1] - abs(idOff.y - remainder[1])) *
+				(coarseRatio[2] - abs(idOff.z - remainder[2])) / wc;
+			pos.x = coarseBase.x + idoffCoarse.x + 1;
+			pos.y = coarseBase.y + idoffCoarse.y + 1;
+			pos.z = coarseBase.z + idoffCoarse.z + 1;
+			int color = pos.x % 2 + pos.y % 2 * 2 + pos.z % 2 * 4;
+			int base = color == 0 ? 0 : gsCoarseVertexEnd[color - 1];
+			int gsid = base +
+				pos.x / 2 +
+				pos.y / 2 * gsCoarseVertexReso[0][color] +
+				pos.z / 2 * gsCoarseVertexReso[0][color] * gsCoarseVertexReso[1][color];
+			if (gsid >= gsCoarseVertexEnd[color]) { gsid = -1; }
+			nvCoarse[id] = gsid;
+		}
+
+
+		for (int i = 0; i < 8; i++) {
+			int neighId = nvCoarse[i];
+			if (neighId != -1) {
+				float uc = { gUcoarse_H[0][neighId] };
+				u += uc * w[i];
+			}
+		}
+
+		if (isRoot) {
+			if ((bx == 0 && vflag.flagbits & LEFT_BOUNDARY) || (by == 0 && vflag.flagbits & NEAR_BOUNDARY) || (bz == 0 && vflag.flagbits & DOWN_BOUNDARY)) {
+				u = 0;
+			}
+		}
+		gU_H[0][tid] += VT(u);
+	}
+}
 
 void homo::Grid_H::gs_relaxation(float w_SOR /*= 1.f*/, int times_ /*= 1*/)
 {
@@ -1026,16 +1160,8 @@ void homo::Grid_H::gs_relaxation(float w_SOR /*= 1.f*/, int times_ /*= 1*/)
 			size_t grid_size, block_size;
 			int n_gs = gsVertexEnd[set_id] - (set_id == 0 ? 0 : gsVertexEnd[set_id - 1]);
 			if (assemb_otf) {
-#if 1
 				make_kernel_param(&grid_size, &block_size, n_gs * 8, 32 * 8);
 				gs_relaxation_otf_kernel_H << <grid_size, block_size >> > (set_id, rho_g, gridCellReso, vertflag, cellflag, w_SOR, diag_strength);
-#elif 1
-				make_kernel_param(&grid_size, &block_size, n_gs * 8, 32 * 8);
-				gs_relaxation_otf_kernel_opt << <grid_size, block_size >> > (i, rho_g, gridCellReso, vertflag, cellflag, w_SOR);
-#else
-				make_kernel_param(&grid_size, &block_size, n_gs * 16, 32 * 16);
-				gs_relaxation_otf_kernel_test_512 << <grid_size, block_size >> > (i, rho_g, gridCellReso, vertflag, cellflag, w_SOR, diag_strength);
-#endif
 			}
 			else {
 				make_kernel_param(&grid_size, &block_size, n_gs * 13, 32 * 13);
@@ -1043,13 +1169,50 @@ void homo::Grid_H::gs_relaxation(float w_SOR /*= 1.f*/, int times_ /*= 1*/)
 			}
 			cudaDeviceSynchronize();
 			cuda_error_check;
-			//enforce_period_boundary(u_g);
+			enforce_period_boundary(u_g);
 		}
 		enforce_period_boundary(u_g);
 	}
 	cudaDeviceSynchronize();
 	cuda_error_check;
 }
+
+void homo::Grid_H::gs_relaxation_host(int blockid, float w_SOR /*= 1.f*/, int times_ /*= 1*/)
+{
+	AbortErr();
+	// change to 8 bytes bank
+	use8Bytesbank();
+	useGrid_g();
+	devArray_t<int, 3>  gridCellReso{};
+	devArray_t<int, 8>  gsCellEnd{};
+	devArray_t<int, 8>  gsVertexEnd{};
+	for (int i = 0; i < 8; i++) {
+		gsCellEnd[i] = gsCellSetEnd[i];
+		gsVertexEnd[i] = gsVertexSetEnd[i];
+		if (i < 3) gridCellReso[i] = MIN_TRANSFER;
+	}
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	for (int itn = 0; itn < times_; itn++) {
+		for (int i = 0; i < 8; i++) {
+			int set_id = i;
+			size_t grid_size, block_size;
+			int n_gs = gsVertexEnd[set_id] - (set_id == 0 ? 0 : gsVertexEnd[set_id - 1]);
+			make_kernel_param(&grid_size, &block_size, n_gs * 8, 32 * 8);
+			gs_relaxation_otf_kernel_host_H << <grid_size, block_size >> > (set_id, rho_g, gridCellReso, vertflag, cellflag, bx, by, bz, w_SOR, diag_strength);
+			cudaDeviceSynchronize();
+			cuda_error_check;
+		}
+	}
+	cudaDeviceSynchronize();
+	cuda_error_check;
+}
+
 
 void homo::Grid_H::prolongate_correction(void)
 {
@@ -1068,6 +1231,31 @@ void homo::Grid_H::prolongate_correction(void)
 	cudaDeviceSynchronize();
 	cuda_error_check;
 	enforce_period_boundary(u_g);
+}
+
+void homo::Grid_H::prolongate_correction(int blockid)
+{
+	useGrid_g();
+	VertexFlags* vflags = vertflag;
+	VertexFlags* vcoarseFlags = Coarse->vertflag;
+	devArray_t<int, 8> gsVertexEnd{}, gsCoarseVertexEnd{};
+	for (int i = 0; i < 8; i++) {
+		gsVertexEnd[i] = gsVertexSetEnd[i];
+		gsCoarseVertexEnd[i] = Coarse->gsVertexSetEnd[i];
+	}
+	int nv_fine = n_gsvertices();
+	size_t grid_size, block_size;
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+
+	make_kernel_param(&grid_size, &block_size, nv_fine, 256);
+	prolongate_correction_kernel_host_H << <grid_size, block_size >> > (is_root, nv_fine, vflags, vcoarseFlags, gsVertexEnd, gsCoarseVertexEnd, bx, by, bz);
+	cudaDeviceSynchronize();
+	cuda_error_check;
 }
 
 void homo::Grid_H::restrict_residual(void)
@@ -1089,6 +1277,146 @@ void homo::Grid_H::restrict_residual(void)
 	pad_vertex_data(f_g);
 }
 
+void homo::Grid_H::restrict_residual(int blockid)
+{
+	useGrid_g();
+	VertexFlags* vflags = vertflag;
+	VertexFlags* vfineflags = fine->vertflag;
+	devArray_t<int, 8> gsVertexEnd{}, gsFineVertexEnd{};
+	for (int i = 0; i < 8; i++) {
+		gsVertexEnd[i] = gsVertexSetEnd[i];
+		gsFineVertexEnd[i] = fine->gsVertexSetEnd[i];
+	}
+	int blockx, blocky, blockz;
+	blockx = fine->cellReso[0] / MIN_TRANSFER;
+	blocky = fine->cellReso[1] / MIN_TRANSFER;
+	blockz = fine->cellReso[2] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	int nv = fine->n_gsvertices();
+	// need to change the order here
+	size_t grid_size, block_size;
+	make_kernel_param(&grid_size, &block_size, nv, 256);
+	restrict_residual_kernel_host_H << <grid_size, block_size >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd, bx, by, bz);
+	cudaDeviceSynchronize();
+	cuda_error_check;
+	pad_vertex_data(f_g);
+}
+
+template<typename T>
+__global__ void update_residual_otf_kernel_1_host_H(
+	int nv, T* rholist,
+	devArray_t<int, 3> gridCellReso,
+	VertexFlags* vflags, CellFlags* eflags,
+	float diag_strength, int bx, int by, int bz
+) {
+	__shared__ int gsCellReso[3][8];
+	__shared__ int gsVertexReso[3][8];
+	__shared__ int gsCellEnd[8];
+	__shared__ int gsVertexEnd[8];
+
+	__shared__ float KE[8][8];
+
+	__shared__ float sumKeU[4][32];
+
+	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+	int warpId = threadIdx.x / 32;
+	int laneId = threadIdx.x % 32;
+
+	// local vertex id in gs set
+	int vid = blockIdx.x * 32 + laneId;
+
+	bool fiction = false;
+
+	fiction = fiction || vid >= nv;
+	VertexFlags vflag;
+	if (!fiction) {
+		vflag = vflags[vid];
+		fiction = fiction || vflag.is_fiction() || vflag.is_period_padding();
+	}
+	int set_id = vflag.get_gscolor();
+
+	// load cell and vertex reso
+	constant2DToShared(gGsCellReso, gsCellReso);
+	constant2DToShared(gGsVertexReso, gsVertexReso);
+	constantToShared(gGsCellEnd, gsCellEnd);
+	constantToShared(gGsVertexEnd, gsVertexEnd);
+	initSharedMem(&sumKeU[0][0], sizeof(sumKeU) / sizeof(float));
+	// load template matrix
+	loadTemplateMatrix_H(KE);
+
+	GridVertexIndex indexer(gridCellReso[0], gridCellReso[1], gridCellReso[2]);
+	if (!fiction) {
+		indexer.locate(vid, vflag.get_gscolor(), gsVertexEnd);
+	}
+
+
+	float KeU = 0.;
+
+	// if (!fiction) gR[0][vid] = KE[0][0];
+
+	int elementId = -1;
+	if (!fiction) elementId = indexer.neighElement(warpId, gsCellEnd, gsCellReso).getId();
+	int vselfrow = (7 - warpId);
+	float rhop = 0;
+	CellFlags eflag;
+	if (elementId != -1) {
+		eflag = eflags[elementId];
+		if (!eflag.is_fiction()) rhop = float(rholist[elementId]);
+	}
+
+	if (elementId != -1 && !eflag.is_fiction() && !fiction) {
+#pragma unroll
+		for (int i = 0; i < 8; i++) {
+			int vneigh =
+				(warpId % 2 + i % 2) +
+				(warpId / 2 % 2 + i / 2 % 2) * 3 +
+				(warpId / 4 + i / 4) * 9;
+			int vneighId = indexer.neighVertex(vneigh, gsVertexEnd, gsVertexReso).getId();
+			VertexFlags nvflag;
+			if (vneighId != -1) {
+				nvflag = vflags[vneighId];
+				if (!nvflag.is_fiction()) {
+					float u = gU_H[0][vneighId];
+					if ((bx == 0 && (nvflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (nvflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (nvflag.flagbits & DOWN_BOUNDARY))) {
+						u = 0;
+					}
+					KeU += KE[vselfrow][i] * u;
+				}
+			}
+		}
+		KeU *= rhop;
+	}
+
+	if (warpId >= 4) {
+		sumKeU[warpId - 4][laneId] = KeU;
+	}
+	__syncthreads();
+
+	if (warpId < 4) {
+		sumKeU[warpId][laneId] += KeU;
+	}
+	__syncthreads();
+
+	if (warpId < 2) {
+		sumKeU[warpId][laneId] += sumKeU[warpId + 2][laneId];
+	}
+	__syncthreads();
+
+	if (warpId < 1 && !fiction && !vflag.is_period_padding()) {
+		KeU = sumKeU[warpId][laneId] + sumKeU[warpId + 1][laneId];
+
+		float r = float(gF_H[0][vid]) - KeU;
+
+		if ((bx == 0 && (vflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (vflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (vflag.flagbits & DOWN_BOUNDARY))) {
+			r = 0;
+		}
+
+		gR_H[0][vid] = r;
+	}
+}
 template<typename T>
 __global__ void update_residual_otf_kernel_1_H(
 	int nv, T* rholist,
@@ -1147,10 +1475,9 @@ __global__ void update_residual_otf_kernel_1_H(
 	int vselfrow = (7 - warpId);
 	float rhop = 0;
 	CellFlags eflag;
-	float penal = exp_penal[0];
 	if (elementId != -1) {
 		eflag = eflags[elementId];
-		if (!eflag.is_fiction()) rhop = rhoPenalMin + powf(float(rholist[elementId]), penal);
+		if (!eflag.is_fiction()) rhop = float(rholist[elementId]);
 	}
 
 	if (elementId != -1 && !eflag.is_fiction() && !fiction) {
@@ -1196,13 +1523,13 @@ __global__ void update_residual_otf_kernel_1_H(
 
 		float r = float(gF_H[0][vid]) - KeU;
 
-		if (vflag.is_dirichlet_boundary()) { r = 0; }
-
+		if (vflag.is_dirichlet_boundary()) {
+			r = 0;
+		}
 		// relax
 		gR_H[0][vid] = r;
 	}
 }
-
 
 // map 32 vertices to 9 warp
 template<int BlockSize = 32 * 9>
@@ -1301,7 +1628,30 @@ void homo::Grid_H::update_residual(void)
 		cudaDeviceSynchronize();
 		cuda_error_check;
 	}
-	pad_vertex_data(r_g);
+	if (!use_host_memory) {
+		pad_vertex_data(r_g);
+	}
+}
+
+void homo::Grid_H::update_residual_host(int blockid)
+{
+	useGrid_g();
+	devArray_t<int, 3> gridCellReso{ MIN_TRANSFER, MIN_TRANSFER, MIN_TRANSFER };
+	VertexFlags* vflags = vertflag;
+	CellFlags* eflags = cellflag;
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	size_t grid_size, block_size;
+	make_kernel_param(&grid_size, &block_size, n_gsvertices() * 8, 32 * 8);
+	update_residual_otf_kernel_1_host_H << <grid_size, block_size >> > (n_gsvertices(), rho_g, gridCellReso,
+		vflags, eflags, diag_strength, bx, by, bz);
+	cudaDeviceSynchronize();
+	cuda_error_check;
 }
 
 __device__ int gsPos2Id(int pos[3], int* gsEnd, int(*gsReso)[8]) {
@@ -1321,7 +1671,7 @@ __device__ int gsPos2Id(int pos[3], int* gsEnd, int(*gsReso)[8]) {
 
 template<typename T>
 __global__ void enforce_unit_macro_strain_kernel_H(
-	int nv, int istrain, devArray_t<Grid_H::VT*, 1> fcharlist, VertexFlags* vflags, CellFlags* eflags, T* rholist
+	int nv, int istrain, devArray_t<Grid_H::VT*, 1> fcharlist, VertexFlags* vflags, CellFlags* eflags, T* rholist, int reso
 ) {
 	__shared__ float feMu[8][3];
 	loadfeMuMatrix(feMu);
@@ -1340,7 +1690,7 @@ __global__ void enforce_unit_macro_strain_kernel_H(
 	}
 
 	int vid = tid;
-	GridVertexIndex indexer(gGridCellReso[0], gGridCellReso[1], gGridCellReso[2]);
+	GridVertexIndex indexer(reso, reso, reso);
 	indexer.locate(vid, vflag.get_gscolor(), gGsVertexEnd);
 
 	short3 vpos = indexer.getPos();
@@ -1378,7 +1728,7 @@ void homo::Grid_H::enforce_unit_macro_strain_host(int istrain)
 		// give in the right rho_g
 		devArray_t<VT*, 1> fcharlist{ f_g[0] };
 		make_kernel_param(&grid_size, &block_size, n_gsvertices(), 256);
-		enforce_unit_macro_strain_kernel_H << <grid_size, block_size >> > (n_gsvertices(), istrain, fcharlist, vflags, eflags, rho_g);
+		enforce_unit_macro_strain_kernel_H << <grid_size, block_size >> > (n_gsvertices(), istrain, fcharlist, vflags, eflags, rho_g, MIN_TRANSFER);
 		cudaDeviceSynchronize();
 		cuda_error_check;
 		// download to f_h
@@ -1394,7 +1744,7 @@ void homo::Grid_H::enforce_unit_macro_strain(int istrain)
 	size_t grid_size, block_size;
 	devArray_t<VT*, 1> fcharlist{ f_g[0] };
 	make_kernel_param(&grid_size, &block_size, n_gsvertices(), 256);
-	enforce_unit_macro_strain_kernel_H << <grid_size, block_size >> > (n_gsvertices(), istrain, fcharlist, vflags, eflags, rho_g);
+	enforce_unit_macro_strain_kernel_H << <grid_size, block_size >> > (n_gsvertices(), istrain, fcharlist, vflags, eflags, rho_g, cellReso[0]);
 	cudaDeviceSynchronize();
 	cuda_error_check;
 }
@@ -2601,7 +2951,7 @@ __global__ void update_rho_host_kernel(
 	if (tid >= ne) return;
 	// srcrho[tid];
 	int pos[3] = { tid % (MIN_TRANSFER + 2), tid / (MIN_TRANSFER + 2) % (MIN_TRANSFER + 2), tid / (MIN_TRANSFER + 2) / (MIN_TRANSFER + 2) };
-	int gsid = lexi2gs(pos, gGsCellReso, gGsCellEnd);
+	int gsid = lexi2gs(pos, gGsCellReso, gGsCellEnd, true);
 
 	CellFlags eflag;
 

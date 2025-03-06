@@ -48,6 +48,10 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 {
 	if (!grids[0]->use_host_memory) {
 		grids[0]->gs_relaxation(w_SOR);
+		grids[0]->update_residual();
+		// restrict_residual may need another kernel
+		grids[1]->restrict_residual();
+		grids[1]->reset_displacement();
 	}
 	else {
 		// for blocks use gs_relaxation
@@ -58,32 +62,43 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		int block_numz = (cellReso[2] / MIN_TRANSFER);
 		int block_num = block_numx * block_numy * block_numz;
 		int block_len = grids[0]->n_gsvertices();
+		for (int k = 0; k < 5; k++) {
+			for (int i = 0; i < block_num; i++) {
+				// give in rho_g u_g
+				grids[0]->use_block_rho(i);
+				grids[0]->use_block_u_g(i);
+				grids[0]->use_block_f_g(i);
+				grids[0]->gs_relaxation_host(i);
+				grids[0]->update_residual_host(i);
+				grids[0]->write_block_u_g(i);
+				grids[0]->write_block_r_g(i);
+				// u_g out to u_h
+			}
+			grids[0]->enforce_vertex_boundary(grids[0]->u_h);
+		}
+		grids[0]->enforce_vertex_boundary(grids[0]->r_h);
+		double res = norm_host(grids[0]->r_h);
+		printf("residual is:%lf\n", res);
 
 		for (int i = 0; i < block_num; i++) {
-			// give in rho_g u_g
-			grids[0]->use_block_rho(i);
-			grids[0]->use_block_u_g(i);
-			grids[0]->use_block_f_g(i);
-			grids[0]->gs_relaxation(w_SOR);
-			grids[0]->write_block_u_g(i);
-			// u_g out to u_h
+			grids[0]->use_block_r_g(i);
+			grids[1]->restrict_residual(i);
 		}
+		grids[1]->reset_displacement();
 	}
-	for (int i = 1; i < grids.size(); i++) {
-		if (i == 1) {
-			grids[0]->update_residual();
-			grids[1]->restrict_residual();
-		}
-		else {
-			grids[i - 1]->update_residual();
-			// restrict_residual may need another kernel
-			grids[i]->restrict_residual();
-		}
+	grids[1]->gs_relaxation(w_SOR);
+	for (int i = 2; i < grids.size(); i++) {
+		grids[i - 1]->update_residual();
+		double res = grids[i-1]->residual();
+		printf("residual is:%lf\n", res);
+		// restrict_residual may need another kernel
+		grids[i]->restrict_residual();
 		grids[i]->reset_displacement();
 		if (i == grids.size() - 1) {
 			grids[i]->solveHostEquation();
 			grids[i]->update_residual();
 			double res = grids[i]->residual();
+			printf("residual is:%lf\n", res);
 		}
 		else {
 			grids[i]->gs_relaxation(w_SOR);
@@ -93,12 +108,43 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 	for (int i = grids.size() - 2; i > 0; i--) {
 		grids[i]->prolongate_correction();
 		grids[i]->gs_relaxation(w_SOR);
+		grids[i]->update_residual();
+		double res = grids[i]->residual();
+		printf("residual is:%lf\n", res);
 	}
 	if (!grids[0]->use_host_memory) {
 		grids[0]->prolongate_correction();
 		grids[0]->gs_relaxation(w_SOR);
+		grids[0]->update_residual();
+		double res = grids[0]->residual();
+		printf("residual is:%lf\n", res);
 	}
 	else {
+		auto cellReso = grids[0]->cellReso;
+		int block_numx = (cellReso[0] / MIN_TRANSFER);
+		int block_numy = (cellReso[1] / MIN_TRANSFER);
+		int block_numz = (cellReso[2] / MIN_TRANSFER);
+		int block_num = block_numx * block_numy * block_numz;
+		int block_len = grids[0]->n_gsvertices();
+		for (int i = 0; i < block_num; i++) {
+			grids[0]->use_block_u_g(i);
+			grids[0]->prolongate_correction(i);
+			grids[0]->write_block_u_g(i);
+		}
+		grids[0]->enforce_vertex_boundary(grids[0]->u_h);
+		for (int i = 0; i < block_num; i++) {
+			// give in rho_g u_g
+			grids[0]->use_block_rho(i);
+			grids[0]->use_block_u_g(i);
+			grids[0]->use_block_f_g(i);
+			grids[0]->gs_relaxation_host(i);
+			grids[0]->update_residual_host(i);
+			grids[0]->write_block_u_g(i);
+			grids[0]->write_block_r_g(i);
+		}
+		grids[0]->enforce_vertex_boundary(grids[0]->r_h);
+		double res = norm_host(grids[0]->r_h);
+		printf("residual is:%lf\n", res);
 	}
 	return;
 }
@@ -129,14 +175,43 @@ double homo::MG_H::solveEquation(double tol /*= 1e-2*/, bool with_guess /*= true
 	double uch = 1e-7;
 	while ((rel_res > tol || uch > 1e-6) && iter++ < 200) {
 #if 1
-		v_cycle(1);
+		while (1) {
+			v_cycle(1);
+		}
+		//for (int iter = 0; iter < 100; iter++) {
+		//	auto cellReso = grids[0]->cellReso;
+		//	int block_numx = (cellReso[0] / MIN_TRANSFER);
+		//	int block_numy = (cellReso[1] / MIN_TRANSFER);
+		//	int block_numz = (cellReso[2] / MIN_TRANSFER);
+		//	int block_num = block_numx * block_numy * block_numz;
+		//	int block_len = grids[0]->n_gsvertices();
+		//	std::vector<float> last_u = grids[0]->u_h;
+		//	for (int i = 0; i < block_num; i++) {
+		//		// give in rho_g u_g
+		//		grids[0]->use_block_rho(i);
+		//		grids[0]->use_block_u_g(i);
+		//		grids[0]->use_block_f_g(i);
+		//		grids[0]->gs_relaxation_host(i); 
+		//		grids[0]->update_residual_host(i);
+		//		grids[0]->write_block_u_g(i);
+		//		grids[0]->write_block_r_g(i);
+		//		// u_g out to u_h
+		//	}
+		//	grids[0]->enforce_vertex_boundary(grids[0]->u_h);
+		//	float u_diff_sum = 0;
+		//	for (int i = 0; i < last_u.size(); i++) {
+		//		u_diff_sum += abs(grids[0]->u_h[i] - last_u[i]);
+		//	}
+		//	rel_res = norm_host(grids[0]->r_h);
+		//	printf("relative_error is : %f\n u_diff is : %f\n", rel_res, u_diff_sum);
+		//}
 #else
 		grids[0]->gs_relaxation(1.6);
 		grids[0]->update_residual();
 		rel_res = grids[0]->relative_residual();
 #endif
 		if (enable_translate_displacement) grids[0]->translateForce(2, grids[0]->u_g);
-		rel_res = grids[0]->residual() / (fnorm + 1e-10);
+		rel_res = norm_host(grids[0]->r_h) / (fnorm + 1e-10);
 		if (rel_res > 10 || iter >= 199) {
 			//throw std::runtime_error("numerical failure");
 			if (rel_res > 10) {

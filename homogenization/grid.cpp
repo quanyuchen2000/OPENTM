@@ -317,6 +317,7 @@ double homo::Grid_H::residual(void)
 {
 	return v_norm(r_g[0]);
 }
+
 void Grid_H::useFchar(int k)
 {
 	useGrid_g();
@@ -364,44 +365,41 @@ void Grid_H::pad_vertex_data_host(std::vector<float>& vec) {
 	for (int block_id = 0; block_id < block_num; block_id++) {
 		off_set = block_len * block_id;
 		int off_setx = block_id % block_numx, off_sety = block_id / block_numx % block_numy, off_setz = block_id / (block_numx * block_numy);
-		// k = 0
-		int tox, toy, toz;
-		int ti, tj, tk;
 		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
 			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
 				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
-					if (!(i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2)) {
-						continue;
+					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == j == MIN_TRANSFER + 2) {
+						int pos[3] = { i, j, k };
+						int boundary = lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						int gsid_tar = block_id * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						if (i == 0) {
+							off_setx = (off_setx - 1 + block_numx) % block_numx;
+							pos[0] = MIN_TRANSFER;
+						}
+						if (i == MIN_TRANSFER + 2) {
+							off_setx = (off_setx + 1) % block_numx;
+							pos[0] = 2;
+						}
+						if (j == 0) {
+							off_sety = (off_sety - 1 + block_numy) % block_numy;
+							pos[1] = MIN_TRANSFER;
+						}
+						if (j == MIN_TRANSFER + 2) {
+							off_sety = (off_sety + 1) % block_numy;
+							pos[1] = 2;
+						}
+						if (k == 0) {
+							off_setz = (off_setz - 1 + block_numz) % block_numz;
+							pos[2] = MIN_TRANSFER;
+						}
+						if (k == MIN_TRANSFER + 2) {
+							off_setz = (off_setz + 1) % block_numz;
+							pos[2] = 2;
+						}
+						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
+						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						vec[gsid_tar] = vec[gsid_src];
 					}
-					if (i == 0) {
-						tox = (off_setx - 1 + block_numx) % block_numx;
-						ti = MIN_TRANSFER + 1;
-					}
-					else if (i == MIN_TRANSFER + 2) {
-						tox = (off_setx + 1 + block_numx) % block_numx;
-						ti = 1;
-					}
-					if (j == 0) {
-						toy = (off_sety - 1 + block_numy) % block_numy;
-						tj = MIN_TRANSFER + 1;
-					}
-					else if (j == MIN_TRANSFER + 2) {
-						toy = (off_sety + 1 + block_numy) % block_numy;
-						tj = 1;
-					}
-					if (k == 0) {
-						toz = (off_setz - 1 + block_numz) % block_numz;
-						tk = MIN_TRANSFER + 1;
-					}
-					else if (k == MIN_TRANSFER + 2) {
-						toz = (off_setz + 1 + block_numz) % block_numz;
-						tk = 1;
-					}
-					int posid[3] = {i, j, k};
-					int id = off_set + lexi2gs(posid, gsVertexReso, gsVertexSetEnd);
-					int postid[3] = { ti, tj, tk };
-					int tid = (tox + toy * block_numx + toz * block_numx * block_numy) * block_len + lexi2gs(postid, gsVertexReso, gsVertexSetEnd);
-					vec[id] = vec[tid];
 				}
 			}
 		}
@@ -500,6 +498,24 @@ void homo::Grid_H::writeGsVertexPos(const std::string& fname)
 	std::vector<int> pos[3];
 	getGsVertexPos(pos);
 	homoutils::writeVectors(fname, pos);
+}
+void homo::Grid_H::writeStencil() {
+	if (assemb_otf == true) {
+		printf("no stencil\n");
+		return;
+	}
+	else {
+		std::ofstream fout("stencil.txt");
+		std::vector<VT> temple_vec(n_gsvertices(), 0);
+		for (int i = 0; i < 27; i++) {
+			cudaMemcpy(temple_vec.data(), stencil_g[i], sizeof(VT) * n_gsvertices(), cudaMemcpyDeviceToHost);
+			for (const auto& x : temple_vec) {
+				fout << x << " ";
+			}
+			fout << "\n";
+		}
+		fout.close();
+	}
 }
 
 void homo::Grid_H::writeDensity(const std::string& fname, VoxelIOFormat frmat)
@@ -824,6 +840,100 @@ void homo::Grid_H::enforce_period_boundary(VT* v[1], bool additive /*= false*/)
 	//if (additive) { throw std::runtime_error("additive should never be set"); }
 	enforce_period_vertex(v, additive);
 	pad_vertex_data(v);
+}
+void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
+	// seam align to right 
+	// update padding
+	int resox = cellReso[0];
+	int resoy = cellReso[1];
+	int resoz = cellReso[2];
+	int off_set = 0;
+
+	int block_numx = (resox / MIN_TRANSFER);
+	int block_numy = (resoy / MIN_TRANSFER);
+	int block_numz = (resoz / MIN_TRANSFER);
+
+	int block_num = block_numx * block_numy * block_numz;
+	for (int bid = 0; bid < block_num; bid++) {
+		int off_setx = bid % block_numx, off_sety = bid / block_numx % block_numy, off_setz = bid / (block_numx * block_numy);
+		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
+			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+					// seam align to right also can say period boundary
+					if (i == 1 || j == 1 || k == 1) {
+						int pos[3] = { i, j, k };
+						int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						if (i == 1) {
+							off_setx = (off_setx - 1 + block_numx) % block_numx;
+							pos[0] = MIN_TRANSFER + 1;
+						}
+						else {
+							pos[0] = i;
+						}
+						if (j == 1) {
+							off_sety = (off_sety - 1 + block_numy) % block_numy;
+							pos[1] = MIN_TRANSFER + 1;
+						}
+						else {
+							pos[1] = j;
+						}
+						if (k == 1) {
+							off_setz = (off_setz - 1 + block_numz) % block_numz;
+							pos[2] = MIN_TRANSFER + 1;
+						}
+						else {
+							pos[2] = k;
+						}
+						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
+						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						v[gsid_tar] = v[gsid_src];
+					}
+					// update or initialize paddings
+					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == j == MIN_TRANSFER + 2) {
+						int pos[3] = { i, j, k };
+						int boundary = lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						if (i == 0) {
+							off_setx = (off_setx - 1 + block_numx) % block_numx;
+							pos[0] = MIN_TRANSFER;
+						}
+						else if (i == MIN_TRANSFER + 2) {
+							off_setx = (off_setx + 1) % block_numx;
+							pos[0] = 2;
+						}
+						else {
+							pos[0] = i;
+						}
+						if (j == 0) {
+							off_sety = (off_sety - 1 + block_numy) % block_numy;
+							pos[1] = MIN_TRANSFER;
+						}
+						else if (j == MIN_TRANSFER + 2) {
+							off_sety = (off_sety + 1) % block_numy;
+							pos[1] = 2;
+						}
+						else {
+							pos[1] = j;
+						}
+						if (k == 0) {
+							off_setz = (off_setz - 1 + block_numz) % block_numz;
+							pos[2] = MIN_TRANSFER;
+						}
+						else if (k == MIN_TRANSFER + 2) {
+							off_setz = (off_setz + 1) % block_numz;
+							pos[2] = 2;
+						}
+						else {
+							pos[2] = k;
+						}
+						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
+						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						v[gsid_tar] = v[gsid_src];
+					}
+				}
+			}
+		}
+	}
 }
 
 void homo::Grid_H::translateForce(int type_, VT* v[1]) {
