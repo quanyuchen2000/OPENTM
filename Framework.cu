@@ -161,7 +161,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 	Homogenization_H hom_H(config);
 	hom_H.ConfigDiagPrecondition(0);
 	int total_ne = (reso / MIN_TRANSFER * reso / MIN_TRANSFER * reso / MIN_TRANSFER) * pow(MIN_TRANSFER + 2, 3);
-	if (reso > MIN_TRANSFER) {
+	if (reso >= MIN_TRANSFER) {
 		std::vector<float> rho(total_ne);
 		if (!rho0) {
 			initDensity_Host(rho, config);
@@ -179,7 +179,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 
 		ConvergeChecker criteria(config.finthres);
 		OCOptimizer oc(ne, 0.001, 0.02, 0.5);
-
+		
 		VolumeGovernor governor;
 		clock_t start = clock();
 		float final_val;

@@ -243,7 +243,7 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	size_t total_gpu = 0;
 	size_t total_cpu = 0;
 	// judge whether to use host memory
-	use_host_memory = (cellReso[0] > MIN_TRANSFER);
+	use_host_memory = (cellReso[0] >= MIN_TRANSFER);
 	if (use_host_memory){
 		int total_nv = (cellReso[0]/MIN_TRANSFER * cellReso[1]/MIN_TRANSFER * cellReso[2]/MIN_TRANSFER) * nv;
 		// the total data
@@ -321,10 +321,9 @@ double homo::Grid_H::residual(void)
 void Grid_H::useFchar(int k)
 {
 	useGrid_g();
-	if (cellReso[0] > MIN_TRANSFER) {
+	if (cellReso[0] >= MIN_TRANSFER) {
 		// todo
 		enforce_unit_macro_strain_host(k);
-		// padding by host function
 		pad_vertex_data_host(f_h);
 	}
 	else {
@@ -368,7 +367,7 @@ void Grid_H::pad_vertex_data_host(std::vector<float>& vec) {
 		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
 			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
 				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
-					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == j == MIN_TRANSFER + 2) {
+					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2) {
 						int pos[3] = { i, j, k };
 						int boundary = lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 						int gsid_tar = block_id * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
@@ -408,32 +407,17 @@ void Grid_H::pad_vertex_data_host(std::vector<float>& vec) {
 
 void Grid_H::reset_displacement(void)
 {
-	if (cellReso[0] > MIN_TRANSFER) {
-		memset(u_h.data(), 0, u_h.size() * sizeof(VT));
-	}
-	else {
-		v_reset(u_g[0]);
-	}
+	v_reset(u_g[0]);
 }
 
 void Grid_H::reset_residual(void)
 {
-	if (cellReso[0] > MIN_TRANSFER) {
-		memset(r_h.data(), 0, r_h.size() * sizeof(VT));
-	}
-	else {
-		v_reset(r_g[0]);
-	}
+	v_reset(r_g[0]);
 }
 
 void Grid_H::reset_force(void)
 {
-	if (cellReso[0] > MIN_TRANSFER) {
-		memset(f_h.data(), 0, f_h.size() * sizeof(VT));
-	}
-	else {
-		v_reset(f_g[0]);
-	}
+	v_reset(f_g[0]);
 }
 
 void Grid_H::setUchar(int k, VT* uchar)
@@ -854,42 +838,59 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 	int block_numz = (resoz / MIN_TRANSFER);
 
 	int block_num = block_numx * block_numy * block_numz;
+	// enforce_period_vertex
 	for (int bid = 0; bid < block_num; bid++) {
-		int off_setx = bid % block_numx, off_sety = bid / block_numx % block_numy, off_setz = bid / (block_numx * block_numy);
-		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
-			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
-				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+		for (int k = 1; k < MIN_TRANSFER + 2; k++) {
+			for (int j = 1; j < MIN_TRANSFER + 2; j++) {
+				for (int i = 1; i < MIN_TRANSFER + 2; i++) {
+					// update or initialize paddings
+					int off_setx = bid % block_numx, off_sety = bid / block_numx % block_numy, off_setz = bid / (block_numx * block_numy);
 					// seam align to right also can say period boundary
-					if (i == 1 || j == 1 || k == 1) {
+					if (i == MIN_TRANSFER + 1 || j == MIN_TRANSFER + 1 || k == MIN_TRANSFER + 1) {
 						int pos[3] = { i, j, k };
 						int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						if (i == 1) {
-							off_setx = (off_setx - 1 + block_numx) % block_numx;
-							pos[0] = MIN_TRANSFER + 1;
+						if (i == MIN_TRANSFER + 1) {
+							off_setx = (off_setx + 1) % block_numx;
+							pos[0] = 1;
 						}
 						else {
 							pos[0] = i;
 						}
-						if (j == 1) {
-							off_sety = (off_sety - 1 + block_numy) % block_numy;
-							pos[1] = MIN_TRANSFER + 1;
+						if (j == MIN_TRANSFER + 1) {
+							off_sety = (off_sety + 1) % block_numy;
+							pos[1] = 1;
 						}
 						else {
 							pos[1] = j;
 						}
-						if (k == 1) {
-							off_setz = (off_setz - 1 + block_numz) % block_numz;
-							pos[2] = MIN_TRANSFER + 1;
+						if (k == MIN_TRANSFER + 1) {
+							off_setz = (off_setz + 1) % block_numz;
+							pos[2] = 1;
 						}
 						else {
 							pos[2] = k;
 						}
 						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
 						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						//if (1) {
+						//	printf("pos tar:(%d, %d, %d), pos src:(%d, %d, %d)\n", i, j, k, pos[0], pos[1], pos[2]);
+						//	printf("block tar:(%d, %d, %d)\n", off_setx, off_sety, off_setz);
+						//}
 						v[gsid_tar] = v[gsid_src];
 					}
+				}
+			}
+		}
+	}
+	// pad_vertex_data
+	for (int bid = 0; bid < block_num; bid++) {
+		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
+			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
 					// update or initialize paddings
-					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == j == MIN_TRANSFER + 2) {
+					int off_setx = bid % block_numx, off_sety = bid / block_numx % block_numy, off_setz = bid / (block_numx * block_numy);
+					// seam align to right also can say period boundary
+					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2) {
 						int pos[3] = { i, j, k };
 						int boundary = lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 						int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
@@ -928,6 +929,10 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 						}
 						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
 						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+						//if (1) {
+						//	printf("pos tar:(%d, %d, %d), pos src:(%d, %d, %d)\n", i, j, k, pos[0], pos[1], pos[2]);
+						//	printf("block tar:(%d, %d, %d)\n", off_setx, off_sety, off_setz);
+						//}
 						v[gsid_tar] = v[gsid_src];
 					}
 				}

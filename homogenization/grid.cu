@@ -170,6 +170,7 @@ __global__ void setVertexFlags_kernel(
 		if ((pos[0] - 1) % cellReso[0] == 0 && 
 			(pos[1] - 1) % cellReso[1] == 0 &&
 			(pos[2] - 1) % cellReso[2] == 0) {
+			printf("pos:(%f,%f,%f)\n", pos[0], pos[1], pos[2]);
 			flag.set_dirichlet_boundary();
 		}
 
@@ -635,7 +636,7 @@ __global__ void gs_relaxation_otf_kernel_host_H(
 					nvflag = vflags[vneighId];
 					if (!nvflag.is_fiction()) {
 						float u = { gU_H[0][vneighId] };
-						if ((bx == 0 && (nvflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (nvflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (nvflag.flagbits & DOWN_BOUNDARY))) {
+						if (bx == 0 && by == 0 && bz == 0 && nvflag.is_dirichlet_boundary()) {
 							u = 0;
 						}
 						KeU += KE[vselfrow][i] * u;
@@ -679,7 +680,7 @@ __global__ void gs_relaxation_otf_kernel_host_H(
 #endif
 
 		// if dirichlet boundary;
-		if ((bx == 0 && (vflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (vflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (vflag.flagbits & DOWN_BOUNDARY))) {
+		if (bx == 0 && by == 0 && bz == 0 && vflag.is_dirichlet_boundary()) {
 			//auto pos = indexer.getPos();
 			//printf("pos is:(%d, %d, %d)\n", pos.x, pos.y, pos.z);
 			u = 0;
@@ -857,7 +858,6 @@ __global__ void restrict_residual_kernel_H(
 				}
 			}
 		}
-
 		//if (vflag.is_dirichlet_boundary()) r[0] = r[1] = r[2] = 0;
 		gF_H[0][tid] = r;
 	}
@@ -900,15 +900,23 @@ __global__ void restrict_residual_kernel_host_H(
 
 	int coarseRatio[3] = { gUpCoarse[0], gUpCoarse[1], gUpCoarse[2] };
 	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
-
+	pos.x -= 1;
+	pos.y -= 1;
+	pos.z -= 1;
 	float r = { 0. };
 	int bid[3] = { bx, by, bz };
+	// if the vertex on the face of a block, it contribution need to * 0.5; 
+	float ratio = 1;
+	if (pos.x == 0 || pos.x == MIN_TRANSFER) { ratio *= 0.5; }
+	if (pos.y == 0 || pos.y == MIN_TRANSFER) { ratio *= 0.5; }
+	if (pos.z == 0 || pos.z == MIN_TRANSFER) { ratio *= 0.5; }
+
 	if (!fiction && !vflag.is_period_padding()) {
 		for (int offx = -coarseRatio[0] + 1; offx < coarseRatio[0]; offx++) {
 			for (int offy = -coarseRatio[1] + 1; offy < coarseRatio[1]; offy++) {
 				for (int offz = -coarseRatio[2] + 1; offz < coarseRatio[2]; offz++) {
 					// for reso == 32 pos is from 1 to 33
-					int off_pos[3] = { pos.x + offx - 1, pos.y + offy - 1, pos.z + offz - 1 };
+					int off_pos[3] = { pos.x + offx, pos.y + offy, pos.z + offz };
 					// check if off_pos reffer to a coarse vertex
 					// if no referred skip
 					if (off_pos[0] % coarseRatio[0] == 0 && off_pos[1] % coarseRatio[1] == 0 && off_pos[2] % coarseRatio[2] == 0) {
@@ -923,45 +931,26 @@ __global__ void restrict_residual_kernel_host_H(
 							c_true_pos[pos_idx] = (MIN_TRANSFER / coarseRatio[pos_idx]) * bid[pos_idx] + c_pos[pos_idx];
 						}
 						// printf("fine pos: (%d, %d, %d) coarse pos:(%d, %d, %d)\n",pos.x, pos.y, pos.z, c_true_pos[0], c_true_pos[1], c_true_pos[2]);
-						// coarse pos to coarse tid
-						int coarse_lexi = lexi2gs(c_true_pos, gGsVertexReso, gGsVertexEnd);
-						atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w);
-						// because of the period condition, it should contribute to all reflect boundary if it's not on
-						// a boundary and contribute to any boundary
-						if (pos.x - 1 == 0 || pos.x - 1 == MIN_TRANSFER || pos.y - 1 == 0 || pos.y - 1 == MIN_TRANSFER || pos.z - 1 == 0 || pos.z - 1 == MIN_TRANSFER) {
-							continue;
-						}
-						int reflect[3];
-						int xprepare[2] = { c_true_pos[0], -1 };
-						int yprepare[2] = { c_true_pos[1], -1 };
-						int zprepare[2] = { c_true_pos[2], -1 };
 
-						if (c_true_pos[0] == 0 && pos.x != 1) {
-							xprepare[1] = gGridCellReso[0];
-						}
-						if (c_true_pos[0] == gGridCellReso[0] && pos.x != MIN_TRANSFER + 1) {
-							xprepare[1] = 0;
-						}
-						if (c_true_pos[1] == 0 && pos.y != 1) {
-							yprepare[1] = gGridCellReso[1];
-						}
-						if (c_true_pos[1] == gGridCellReso[1] && pos.y != MIN_TRANSFER + 1) {
-							yprepare[1] = 0;
-						}
-						if (c_true_pos[2] == 0 && pos.z != 1) {
-							zprepare[1] = gGridCellReso[2];
-						}
-						if (c_true_pos[2] == gGridCellReso[2] && pos.z != MIN_TRANSFER + 1) {
-							zprepare[1] = 0;
-						}
+						// if c_true_pos on the edges do to the opposite pos too
+						int xp[2] = {c_true_pos[0], -1};
+						int yp[2] = {c_true_pos[1], -1};
+						int zp[2] = {c_true_pos[2], -1};
+						if (xp[0] == 0) { xp[1] = gGridCellReso[0]; }
+						if (xp[0] == gGridCellReso[0]) { xp[1] = 0; }
+						if (yp[0] == 0) { yp[1] = gGridCellReso[1]; }
+						if (yp[0] == gGridCellReso[1]) { yp[1] = 0; }
+						if (zp[0] == 0) { zp[1] = gGridCellReso[2]; }
+						if (zp[0] == gGridCellReso[2]) { zp[1] = 0; }
 						for (int i = 0; i < 8; i++) {
 							int idx = i % 2;
 							int idy = i / 2 % 2;
 							int idz = i / 4;
-							if (xprepare[idx] != -1 && yprepare[idy] != -1 && zprepare[idz] != -1) {
-								reflect[0] = xprepare[idx]; reflect[1] = yprepare[idy]; reflect[2] = zprepare[idz];
+							int reflect[3];
+							if (xp[idx] != -1 && yp[idy] != -1 && zp[idz] != -1) {
+								reflect[0] = xp[idx]; reflect[1] = yp[idy]; reflect[2] = zp[idz];
 								int coarse_lexi = lexi2gs(reflect, gGsVertexReso, gGsVertexEnd);
-								atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w);
+								atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w * ratio);
 							}
 						}
 					}
@@ -1132,7 +1121,7 @@ __global__ void prolongate_correction_kernel_host_H(
 		}
 
 		if (isRoot) {
-			if ((bx == 0 && vflag.flagbits & LEFT_BOUNDARY) || (by == 0 && vflag.flagbits & NEAR_BOUNDARY) || (bz == 0 && vflag.flagbits & DOWN_BOUNDARY)) {
+			if (bx == 0 && by == 0 && bz == 0 && vflag.is_dirichlet_boundary()) {
 				u = 0;
 			}
 		}
@@ -1169,7 +1158,7 @@ void homo::Grid_H::gs_relaxation(float w_SOR /*= 1.f*/, int times_ /*= 1*/)
 			}
 			cudaDeviceSynchronize();
 			cuda_error_check;
-			enforce_period_boundary(u_g);
+			//enforce_period_boundary(u_g);
 		}
 		enforce_period_boundary(u_g);
 	}
@@ -1274,6 +1263,13 @@ void homo::Grid_H::restrict_residual(void)
 	restrict_residual_kernel_H << <grid_size, block_size >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd);
 	cudaDeviceSynchronize();
 	cuda_error_check;
+	//std::vector<float> transfer(nv);
+	//cudaMemcpy(transfer.data(), f_g[0], nv*sizeof(float), cudaMemcpyDeviceToHost);
+	//std::ofstream fout("fg.txt");
+	//for (const auto& x : transfer) {
+	//	fout << x << " ";
+	//}
+	//fout.close();
 	pad_vertex_data(f_g);
 }
 
@@ -1301,6 +1297,14 @@ void homo::Grid_H::restrict_residual(int blockid)
 	restrict_residual_kernel_host_H << <grid_size, block_size >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd, bx, by, bz);
 	cudaDeviceSynchronize();
 	cuda_error_check;
+
+	std::vector<float> transfer(n_gsvertices());
+	cudaMemcpy(transfer.data(), f_g[0], n_gsvertices() * sizeof(float), cudaMemcpyDeviceToHost);
+	//std::ofstream fout("fg host.txt");
+	//for (const auto& x : transfer) {
+	//	fout << x << " ";
+	//}
+	//fout.close();
 	pad_vertex_data(f_g);
 }
 
@@ -1380,7 +1384,7 @@ __global__ void update_residual_otf_kernel_1_host_H(
 				nvflag = vflags[vneighId];
 				if (!nvflag.is_fiction()) {
 					float u = gU_H[0][vneighId];
-					if ((bx == 0 && (nvflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (nvflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (nvflag.flagbits & DOWN_BOUNDARY))) {
+					if (bx == 0 && by == 0 && bz == 0 && nvflag.is_dirichlet_boundary()) {
 						u = 0;
 					}
 					KeU += KE[vselfrow][i] * u;
@@ -1410,7 +1414,7 @@ __global__ void update_residual_otf_kernel_1_host_H(
 
 		float r = float(gF_H[0][vid]) - KeU;
 
-		if ((bx == 0 && (vflag.flagbits & LEFT_BOUNDARY)) || (by == 0 && (vflag.flagbits & NEAR_BOUNDARY)) || (bz == 0 && (vflag.flagbits & DOWN_BOUNDARY))) {
+		if (bx == 0 && by == 0 && bz == 0 && vflag.is_dirichlet_boundary()) {
 			r = 0;
 		}
 
@@ -1629,7 +1633,15 @@ void homo::Grid_H::update_residual(void)
 		cuda_error_check;
 	}
 	if (!use_host_memory) {
+		enforce_period_boundary(r_g);
 		pad_vertex_data(r_g);
+		//std::ofstream fout("u_g.txt");
+		//std::vector<float> temple_vec(n_gsvertices(), 0);
+		//cudaMemcpy(temple_vec.data(), u_g[0], sizeof(VT) * n_gsvertices(), cudaMemcpyDeviceToHost);
+		//for (const auto& x : temple_vec) {
+		//	fout << x << " ";
+		//}
+		//fout.close();
 	}
 }
 
@@ -2908,38 +2920,44 @@ __global__ void update_rho_kernel(
 ) {
 	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
 	if (tid >= nv) return;
-
 	GridVertexIndex indexer(gGridCellReso[0], gGridCellReso[1], gGridCellReso[2]);
-
 	VertexFlags vflag;
-
 	vflag = vflags[tid];
-
 	bool fiction = vflag.is_fiction() || vflag.is_period_padding() || vflag.is_max_boundary();
-
 	if (fiction) return;
-
 	indexer.locate(tid, vflag.get_gscolor(), gGsVertexEnd);
-
 	int eid = indexer.neighElement(7, gGsCellEnd, gGsCellReso).getId();
-
 	fiction = fiction || eid == -1;
 	if (fiction) return;
-
 	CellFlags eflag = eflags[eid];
 	if (eflag.is_fiction() || eflag.is_period_padding()) return;
-
 	auto p = indexer.getPos();
 	// to element pos without padding
 	p.x -= 1; p.y -= 1; p.z -= 1;
-
 	int sid;
 	if (srcPitchT <= 0)
 		sid = p.x + (p.y + p.z * gGridCellReso[1]) * gGridCellReso[0];
 	else
 		sid = p.x + (p.y + p.z * gGridCellReso[1]) * srcPitchT;
-
 	dstrho[eid] = srcrho[sid];
+
+	//int tid = blockIdx.x * blockDim.x + threadIdx.x;
+	//if (tid >= nv) return;
+	//// srcrho[tid];
+	//int pos[3] = { tid % gGridCellReso[0], tid / gGridCellReso[0] % gGridCellReso[0], tid / (gGridCellReso[0]) / (gGridCellReso[0]) };
+	//int gsid = lexi2gs(pos, gGsCellReso, gGsCellEnd, false);
+	//int sid;
+	//if (srcPitchT <= 0)
+	//	sid = pos[0] + (pos[1] + pos[2] * gGridCellReso[1]) * gGridCellReso[0];
+	//else
+	//	sid = pos[0] + (pos[1] + pos[2] * gGridCellReso[1]) * srcPitchT;
+	//CellFlags eflag;
+
+	//eflag = eflags[gsid];
+
+	//if (eflag.is_fiction()) { printf("error\n"); };
+
+	//dstrho[gsid] = srcrho[sid];
 }
 
 template<typename T>
@@ -2957,7 +2975,7 @@ __global__ void update_rho_host_kernel(
 
 	eflag = eflags[gsid];
 
-	if (eflag.is_fiction()) return;
+	if (eflag.is_fiction()) { printf("error\n"); };
 
 	dstrho[gsid] = srcrho[tid];
 }
@@ -3122,7 +3140,7 @@ void homo::Grid_H::update(float* rho, int pitchT, bool lexiOrder) {
 void homo::Grid_H::update_host(float* rho) {
 	useGrid_g();
 	size_t grid_size, block_size;
-	int ne = n_gscells();
+	int ne = pow(MIN_TRANSFER+2, 3);
 	auto vflags = vertflag;
 	auto eflags = cellflag;
 	make_kernel_param(&grid_size, &block_size, ne, 256);
