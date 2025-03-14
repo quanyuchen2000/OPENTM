@@ -137,6 +137,7 @@ struct Grid_H {
 	std::vector<VT> f_h;
 	std::vector<VT> r_h;
 	std::vector<VT> *rho_h;
+	std::vector<std::vector<VT>> uchar;
 	//double* uchar_g[6][3];
 	//double* fchar_g[6][3];
 	// float* uchar_g[3];
@@ -269,6 +270,8 @@ struct Grid_H {
 
 	void enforce_unit_macro_strain_host(int istrain);
 
+	void lexiufile(int direct);
+	void loadu();
 	////void update_uchar(void);
 
 	//void setForce(VT* f[3]);
@@ -381,3 +384,4 @@ extern std::string setPathPrefix(const std::string& str);
 
 
 constexpr float rhoPenalMin = 1e-9;
+

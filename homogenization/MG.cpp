@@ -151,6 +151,10 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 
 void homo::MG_H::reset_displacement(void)
 {
+	grids[0]->uchar.resize(3);
+	for (auto i : { 0, 1, 2 }) {
+		grids[0]->uchar[i].resize(grids[0]->uchar[i].size(), 0);
+	}
 	for (int i = 0; i < grids.size(); i++) {
 		grids[i]->reset_displacement();
 	}
@@ -173,41 +177,9 @@ double homo::MG_H::solveEquation(double tol /*= 1e-2*/, bool with_guess /*= true
 	bool enable_translate_displacement = false;
 	std::vector<double> errlist;
 	double uch = 1e-7;
-	while ((rel_res > tol || uch > 1e-6) && iter++ < 200) {
+	while ((rel_res > 1e-2 || uch > 1e-6) && iter++ < 200) {
 #if 1
-		while (1) {
-			v_cycle(1);
-		}
-		for (int iter = 0; iter < 2000; iter++) {
-			auto cellReso = grids[0]->cellReso;
-			int block_numx = (cellReso[0] / MIN_TRANSFER);
-			int block_numy = (cellReso[1] / MIN_TRANSFER);
-			int block_numz = (cellReso[2] / MIN_TRANSFER);
-			int block_num = block_numx * block_numy * block_numz;
-			int block_len = grids[0]->n_gsvertices();
-			std::vector<float> last_u = grids[0]->u_h;
-			for (int i = 0; i < block_num; i++) {
-				// give in rho_g u_g
-				grids[0]->use_block_rho(i);
-				grids[0]->use_block_u_g(i);
-				grids[0]->use_block_f_g(i);
-				grids[0]->gs_relaxation_host(i); 
-				grids[0]->update_residual_host(i);
-				grids[0]->write_block_u_g(i);
-				grids[0]->write_block_r_g(i);
-				// u_g out to u_h
-			}
-			std::vector<float> u_before_enforce = grids[0]->u_h;
-			grids[0]->enforce_vertex_boundary(grids[0]->u_h);
-			float u_diff_sum = 0;
-			float u_diff_sum1 = 0;
-			for (int i = 0; i < last_u.size(); i++) {
-				u_diff_sum += abs(grids[0]->u_h[i] - last_u[i]);
-				u_diff_sum1 += abs(grids[0]->u_h[i] - u_before_enforce[i]);
-			}
-			rel_res = norm_host(grids[0]->r_h);
-			printf("relative_error is : %f, u_diff is : %f, padding_diff is: %f\n", rel_res, u_diff_sum, u_diff_sum1);
-		}
+		v_cycle(1);
 #else
 		while (1) {
 			grids[0]->gs_relaxation(1.);
@@ -217,7 +189,12 @@ double homo::MG_H::solveEquation(double tol /*= 1e-2*/, bool with_guess /*= true
 		}
 #endif
 		if (enable_translate_displacement) grids[0]->translateForce(2, grids[0]->u_g);
-		rel_res = norm_host(grids[0]->r_h) / (fnorm + 1e-10);
+		if (grids[0]->use_host_memory) {
+			rel_res = norm_host(grids[0]->r_h) / (fnorm + 1e-10);
+		}
+		else {
+			rel_res = grids[0]->residual() / (fnorm + 1e-10);
+		}
 		if (rel_res > 10 || iter >= 199) {
 			//throw std::runtime_error("numerical failure");
 			if (rel_res > 10) {

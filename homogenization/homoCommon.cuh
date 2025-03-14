@@ -285,50 +285,6 @@ struct GridVertexIndex {
 
 	// id is in 0~7
 	__device__ IDColor neighElement(int id, int gsCellEnd[8], int gsCellReso[3][8]) {
-#if 0
-		unsigned int vertex_set_org = pack(make_char3(set_id % 2, set_id / 2 % 2, set_id / 4));
-		unsigned int neigh_set_offset = __vsub4(pack(make_char3(id % 2, id / 2 % 2, id / 4)), 0x01010101);
-		unsigned int neigh_set_org = __vadd4(vertex_set_org, neigh_set_offset);
-		neigh_set_org = __vabs4(neigh_set_org);
-
-		int neigh_set_id =
-			cub::BFE(neigh_set_org, 0, 8) +
-			cub::BFE(neigh_set_org, 8, 8) * 2 +
-			cub::BFE(neigh_set_org, 16, 8) * 4;
-		
-		if (neigh_set_id < 0 || neigh_set_id >= 8) print_exception;
-
-		unsigned int gsPosOffset = (~__vcmpeq4(neigh_set_org, vertex_set_org)) & __vcmpeq4(vertex_set_org, 0);
-
-		//if(0){
-		//	short3 vorg{ cub::BFE(vertex_set_org, 0, 8),cub::BFE(vertex_set_org, 8, 8),cub::BFE(vertex_set_org, 16, 8) };
-		//	if (vorg.x == 0 && vorg.y == 0 && vorg.z == 0) {
-		//		if (gsPos.x == 1 && gsPos.y == 1 && gsPos.z == 1) {
-		//			printf("nsorg = %08x   vsetorg = %08x   gpoff = %08x\n", neigh_set_org, vertex_set_org, gsPosOffset);
-		//		}
-		//	}
-		//}
-
-		short3 gsElementPos;
-		gsElementPos.x = (signed char)cub::BFE(gsPosOffset, 0, 8) + gsPos.x;
-		gsElementPos.y = (signed char)cub::BFE(gsPosOffset, 8, 8) + gsPos.y;
-		gsElementPos.z = (signed char)cub::BFE(gsPosOffset, 16, 8) + gsPos.z;
-
-		if (gsElementPos.x < 0 || gsElementPos.x >= gsCellReso[0][neigh_set_id] ||
-			gsElementPos.y < 0 || gsElementPos.y >= gsCellReso[1][neigh_set_id] ||
-			gsElementPos.z < 0 || gsElementPos.z >= gsCellReso[2][neigh_set_id]
-			) {
-			return { {-1,-1} };
-		}
-
-		int base = neigh_set_id == 0 ? 0 : gsCellEnd[neigh_set_id - 1];
-
-		int neigh_id = base + gsElementPos.x +
-			gsElementPos.y * gsCellReso[0][neigh_set_id] +
-			gsElementPos.z * gsCellReso[1][neigh_set_id] * gsCellReso[0][neigh_set_id];
-
-		return { {neigh_id,neigh_set_id} };
-#else
 		int cellpos[3] = {
 			gsPos.x * 2 + org.x + id % 2 - 1,
 			gsPos.y * 2 + org.y + id / 2 % 2 - 1,
@@ -351,7 +307,6 @@ struct GridVertexIndex {
 			egspos[1] * gsCellReso[0][esetid] +
 			egspos[2] * gsCellReso[0][esetid] * gsCellReso[1][esetid];
 		return { {eid, esetid} };
-#endif
 	}
 
 	__device__ IDColor neighCoarseVertex(int id, int coarseRatio[3], volatile int gsCoarseVertexEnd[8], volatile int gsCoarseVertexReso[3][8], volatile int remainder[3]) {
@@ -543,47 +498,6 @@ __device__ void elementMacroDisplacement_H(T uchi[8]) {
 #pragma unroll
 	for (int i = 0; i < 8; i++) {
 		uchi[i] = gDisp_H[i][iStrain];
-	}
-}
-template<typename T, int iStrain>
-__device__ void elementMacroDisplacement(T uchi[24]) {
-#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		int p[3] = { i % 2, i / 2 % 2, i / 4 };
-		if constexpr (iStrain == 0) {
-			uchi[i * 3] = p[0]; uchi[i * 3 + 1] = 0; uchi[i * 3 + 2] = 0;
-		} else if constexpr (iStrain == 1) {
-			uchi[i * 3] = 0; uchi[i * 3 + 1] = p[1]; uchi[i * 3 + 2] = 0;
-		} else if constexpr (iStrain == 2) {
-			uchi[i * 3] = 0; uchi[i * 3 + 1] = 0; uchi[i * 3 + 2] = p[2];
-		} else if constexpr (iStrain == 3) {
-			uchi[i * 3] = 0; uchi[i * 3 + 1] = p[2] / 2.f; uchi[i * 3 + 2] = p[1] / 2.f;
-		} else if constexpr (iStrain == 4) {
-			uchi[i * 3] = p[2] / 2.f; uchi[i * 3 + 1] = 0; uchi[i * 3 + 2] = p[0] / 2.f;
-		} else if constexpr (iStrain == 5) {
-			uchi[i * 3] = p[1] / 2.f; uchi[i * 3 + 1] = p[0] / 2.f; uchi[i * 3 + 2] = 0;
-		}
-	}
-}
-
-template<typename T>
-__device__ void elementMacroDisplacement(int iStrain, T uchi[24]) {
-#pragma unroll
-	for (int i = 0; i < 8; i++) {
-		int p[3] = { i % 2, i / 2 % 2, i / 4 };
-		if (iStrain == 0) {
-			uchi[i * 3] = p[0]; uchi[i * 3 + 1] = 0; uchi[i * 3 + 2] = 0;
-		} else if (iStrain == 1) {
-			uchi[i * 3] = 0; uchi[i * 3 + 1] = p[1]; uchi[i * 3 + 2] = 0;
-		} else if (iStrain == 2) {
-			uchi[i * 3] = 0; uchi[i * 3 + 1] = 0; uchi[i * 3 + 2] = p[2];
-		} else if (iStrain == 3) {
-			uchi[i * 3] = 0; uchi[i * 3 + 1] = p[2] / 2.f; uchi[i * 3 + 2] = p[1] / 2.f;
-		} else if (iStrain == 4) {
-			uchi[i * 3] = p[2] / 2.f; uchi[i * 3 + 1] = 0; uchi[i * 3 + 2] = p[0] / 2.f;
-		} else if (iStrain == 5) {
-			uchi[i * 3] = p[1] / 2.f; uchi[i * 3 + 1] = p[0] / 2.f; uchi[i * 3 + 2] = 0;
-		}
 	}
 }
 

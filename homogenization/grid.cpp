@@ -247,7 +247,6 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	if (use_host_memory){
 		int total_nv = (cellReso[0]/MIN_TRANSFER * cellReso[1]/MIN_TRANSFER * cellReso[2]/MIN_TRANSFER) * nv;
 		// the total data
-		u_h.resize(total_nv, 0);
 		f_h.resize(total_nv, 0);
 		r_h.resize(total_nv, 0);
 		// the block used on device
@@ -289,6 +288,16 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 			}
 		}
 	}
+	else {
+		int total_nv = (cellReso[0] / MIN_TRANSFER * cellReso[1] / MIN_TRANSFER * cellReso[2] / MIN_TRANSFER) * nv;
+		for (int i = 0; i < 3; i++) {
+			uchar.push_back(std::vector<VT>(total_nv, 0));
+			uchar_h[i] = getMem().addBuffer(homoutils::formated("%s_uchost_%d_%d", getName().c_str(), i), nv * sizeof(VT), Managed)->data<VT>();
+			v_reset(uchar_h[i], nv);
+			total_gpu += nv * sizeof(VT);
+			total_cpu += nv * sizeof(VT);
+		}
+	}
 	vertflag = getMem().addBuffer<VertexFlags>(homoutils::formated("%s_vflag", getName().c_str()), nv)->data<VertexFlags>();
 	cellflag = getMem().addBuffer<CellFlags>(homoutils::formated("%s_cflag", getName().c_str()), ne)->data<CellFlags>();
 	total_gpu += nv * sizeof(VertexFlags);
@@ -305,6 +314,21 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 }
 
 
+inline int lexi2gs(int lexpos[3], int gsreso[3][8], int gsend[8], bool padded = false) {
+	int pos[3] = { lexpos[0], lexpos[1], lexpos[2] };
+	if (!padded) {
+		pos[0] += 1; pos[1] += 1; pos[2] += 1;
+	}
+	int org[3] = { pos[0] % 2, pos[1] % 2, pos[2] % 2 };
+	int gscolor = org[0] + org[1] * 2 + org[2] * 4;
+	pos[0] /= 2; pos[1] /= 2; pos[2] /= 2;
+	int gsid = (gscolor == 0 ? 0 : gsend[gscolor - 1]) +
+		pos[0] +
+		pos[1] * gsreso[0][gscolor] +
+		pos[2] * gsreso[0][gscolor] * gsreso[1][gscolor];
+	return gsid;
+}
+
 VT* homo::Grid_H::getDisplacement(void)
 {
 	return u_g[0];
@@ -317,7 +341,71 @@ double homo::Grid_H::residual(void)
 {
 	return v_norm(r_g[0]);
 }
+void Grid_H::loadu() {
+	std::ifstream fin("64_uh.txt");
+	std::string line;
+	std::vector<float> inputvec(pow(cellReso[0] + 1, 3));
+	while (getline(fin, line)) {
+		std::istringstream iss(line);
+		for (auto& x : inputvec) {
+			float value;
+			iss >> value;
+			x = value;
+		}
+	}
+	fin.close();
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	blockz = cellReso[2] / MIN_TRANSFER;
+	for (int blockid = 0; blockid < blockx * blocky * blockz; blockid++) {
+		int bx = blockid % blockx;
+		int by = (blockid / blockx) % blocky;
+		int bz = blockid / (blockx * blocky);
+		for (int posx = 0; posx < MIN_TRANSFER + 1; posx++) {
+			for (int posy = 0; posy < MIN_TRANSFER + 1; posy++) {
+				for (int posz = 0; posz < MIN_TRANSFER + 1; posz++) {
+					int pos[3] = { posx, posy, posz };
+					int gsid = lexi2gs(pos, gsVertexReso, gsVertexSetEnd);
+					int offset = blockid * n_gsvertices();
+					int lexid = (bx * MIN_TRANSFER + posx) + cellReso[0] * (by * MIN_TRANSFER + posy) + cellReso[0] * cellReso[1] * (bz * MIN_TRANSFER + posz);
+					u_h[gsid + offset] = inputvec[lexid];
+				}
+			}
+		}
+	}
+}
+void Grid_H::lexiufile(int direct) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	blockz = cellReso[2] / MIN_TRANSFER;
+	std::vector<float> outputvec(pow(cellReso[0]+1, 3));
+	for (int blockid = 0; blockid < blockx * blocky * blockz; blockid++) {
+		int bx = blockid % blockx;
+		int by = (blockid / blockx) % blocky;
+		int bz = blockid / (blockx * blocky);
+		for (int posx = 0; posx < MIN_TRANSFER+1; posx++) {
+			for (int posy = 0; posy < MIN_TRANSFER+1; posy++) {
+				for (int posz = 0; posz < MIN_TRANSFER+1; posz++) {
+					int pos[3] = { posx, posy, posz };
+					int gsid = lexi2gs(pos, gsVertexReso, gsVertexSetEnd);
+					int offset = blockid * n_gsvertices();
+					float u = uchar[direct][gsid+offset];
+					int lexid = (bx * MIN_TRANSFER + posx) + cellReso[0] * (by * MIN_TRANSFER + posy) + cellReso[0] * cellReso[1] * (bz * MIN_TRANSFER + posz);
+					outputvec[lexid] = u;
+				}
+			}
+		}
+	}
 
+	std::ofstream fout("32_uh.txt");
+	for (const auto& x : outputvec) {
+		fout << x << " ";
+	}
+	fout << "\n";
+	fout.close();
+}
 void Grid_H::useFchar(int k)
 {
 	useGrid_g();
@@ -337,20 +425,6 @@ void Grid_H::useFchar(int k)
 	}
 }
 
-inline int lexi2gs(int lexpos[3], int gsreso[3][8], int gsend[8], bool padded = false) {
-	int pos[3] = { lexpos[0], lexpos[1], lexpos[2] };
-	if (!padded) {
-		pos[0] += 1; pos[1] += 1; pos[2] += 1;
-	}
-	int org[3] = { pos[0] % 2, pos[1] % 2, pos[2] % 2 };
-	int gscolor = org[0] + org[1] * 2 + org[2] * 4;
-	pos[0] /= 2; pos[1] /= 2; pos[2] /= 2;
-	int gsid = (gscolor == 0 ? 0 : gsend[gscolor - 1]) +
-		pos[0] +
-		pos[1] * gsreso[0][gscolor] +
-		pos[2] * gsreso[0][gscolor] * gsreso[1][gscolor];
-	return gsid;
-}
 void Grid_H::pad_vertex_data_host(std::vector<float>& vec) {
 	int off_set = 0;
 	// for each block init block

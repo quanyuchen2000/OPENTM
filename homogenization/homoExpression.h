@@ -151,6 +151,7 @@ namespace homo {
 			return &H_[0][0];
 		}
 	};
+
 	template<typename Scalar>
 	struct heat_tensor_host_t
 	{
