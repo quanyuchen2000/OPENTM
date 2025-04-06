@@ -29,6 +29,10 @@ struct MG_H {
 
 	void updateStencils(void);
 
+	void gsGrid0(int block_num);
+
+	void Grid0(int block_num);
+
 };
 }
 

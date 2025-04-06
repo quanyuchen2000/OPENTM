@@ -17,7 +17,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 32
+#define MIN_TRANSFER 128
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
 	using hvec3 = vec<3, half>;
@@ -113,6 +113,12 @@ struct Grid_H {
 
 	bool use_host_memory = false;
 
+	int current = 0;
+	int next = 1;
+	std::vector<cudaStream_t> stream;
+	std::vector<cudaEvent_t> ready_event;
+	std::vector<cudaEvent_t> cal_event;
+
 	// coarse from finer grid
 	std::array<int, 3> upCoarse = {};
 	// coarse to coarser grid
@@ -128,9 +134,9 @@ struct Grid_H {
 	using VT = float;
 	// for totally used on device
 	VT* stencil_g[27];
-	VT* u_g[1];
-	VT* f_g[1];
-	VT* r_g[1];
+	VT* u_g[2];
+	VT* f_g[2];
+	VT* r_g[2];
 
 	// for used on host
 	std::vector<VT> u_h;
@@ -219,6 +225,7 @@ struct Grid_H {
 
 	void update(std::vector<float> &rho);
 	void update_host(float* rho);
+	void update_hostgs(float* rho);
 
 	void buildRoot(int xreso, int yreso, int zreso, GridConfig config);
 
@@ -227,7 +234,8 @@ struct Grid_H {
 	void setFlags_g(void);
 
 	void useGrid_g(void);
-
+	void useCurrent_g(void);
+	void useNext_g(void);
 	std::string getName(void);
 
 	std::shared_ptr<Grid_H> coarse2(GridConfig config);
@@ -249,6 +257,15 @@ struct Grid_H {
 	void write_block_u_g(int blockid);
 	void write_block_f_g(int blockid);
 	void write_block_r_g(int blockid);
+
+	void use_block_rhogs(int blockid);
+	void use_block_u_ggs(int blockid);
+	void use_block_r_ggs(int blockid);
+	void use_block_f_ggs(int blockid);
+	void write_block_u_ggs(int blockid);
+	void write_block_f_ggs(int blockid);
+	void write_block_r_ggs(int blockid);
+
 	float diagPrecondition(float strength);
 
 	void prolongate_correction(void);
@@ -375,6 +392,56 @@ private:
 	std::pair<int, int> countGS(void);
 	std::pair<int, int> countGS_template(void);
 	size_t allocateBuffer(int nv, int ne);
+	void process_single_block(int block_id, std::vector<float>& vec,
+		int block_numx, int block_numy, int block_numz);
+	void process_block_boundary(int bid, std::vector<VT>& v);
+	template <int Axis, bool IsRightBoundary>
+	void process_single_face(int bid, std::vector<VT>& v) {
+		constexpr int Layer = IsRightBoundary ? (MIN_TRANSFER + 1) : 0;
+		constexpr int SrcLayer = IsRightBoundary ? 1 : MIN_TRANSFER;
+
+		const int block_numx = cellReso[0] / MIN_TRANSFER;
+		const int block_numy = cellReso[1] / MIN_TRANSFER;
+		const int block_numz = cellReso[2] / MIN_TRANSFER;
+
+		int off_setx = bid % block_numx;
+		int off_sety = (bid / block_numx) % block_numy;
+		int off_setz = bid / (block_numx * block_numy);
+
+		int delta = IsRightBoundary ? 1 : -1;
+		if constexpr (Axis == 0) off_setx = (off_setx + delta + block_numx) % block_numx;
+		if constexpr (Axis == 1) off_sety = (off_sety + delta + block_numy) % block_numy;
+		if constexpr (Axis == 2) off_setz = (off_setz + delta + block_numz) % block_numz;
+
+		const int i_start = (Axis == 0) ? Layer : 0;
+		const int i_end = (Axis == 0) ? (Layer + 1) : (MIN_TRANSFER + 3);
+		const int j_start = (Axis == 1) ? Layer : 0;
+		const int j_end = (Axis == 1) ? (Layer + 1) : (MIN_TRANSFER + 3);
+		const int k_start = (Axis == 2) ? Layer : 0;
+		const int k_end = (Axis == 2) ? (Layer + 1) : (MIN_TRANSFER + 3);
+
+		for (int k = k_start; k < k_end; ++k) {
+			for (int j = j_start; j < j_end; ++j) {
+				for (int i = i_start; i < i_end; ++i) {
+
+					int pos_tar[3] = { i, j, k };
+					pos_tar[Axis] = Layer;
+
+					int pos_src[3] = { i, j, k };
+					pos_src[Axis] = SrcLayer;
+
+					int gsid_tar = bid * n_gsvertices() +
+						lexi2gs(pos_tar, gsVertexReso, gsVertexSetEnd, true);
+					int src_bid = off_setx + off_sety * block_numx +
+						off_setz * block_numx * block_numy;
+					int gsid_src = src_bid * n_gsvertices() +
+						lexi2gs(pos_src, gsVertexReso, gsVertexSetEnd, true);
+
+					v[gsid_tar] = v[gsid_src];
+				}
+			}
+		}
+	}
 };
 
 extern std::string getPath(const std::string& str);
@@ -384,4 +451,3 @@ extern std::string setPathPrefix(const std::string& str);
 
 
 constexpr float rhoPenalMin = 1e-9;
-

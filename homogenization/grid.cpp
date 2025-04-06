@@ -3,6 +3,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <numeric>
+#include <thread>
 #include "utils.h"
 #include "matlab/matlab_utils.h"
 #include <exception>
@@ -247,13 +248,20 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	if (use_host_memory){
 		int total_nv = (cellReso[0]/MIN_TRANSFER * cellReso[1]/MIN_TRANSFER * cellReso[2]/MIN_TRANSFER) * nv;
 		// the total data
-		f_h.resize(total_nv, 0);
-		r_h.resize(total_nv, 0);
+		if (is_root) {
+			f_h.resize(total_nv, 0);
+			cudaHostRegister(f_h.data(), f_h.size() * sizeof(float), cudaHostRegisterPortable);
+			r_h.resize(total_nv, 0);
+			cudaHostRegister(r_h.data(), r_h.size() * sizeof(float), cudaHostRegisterPortable);
+		}
 		// the block used on device
 		u_g[0] = getMem().addBuffer(homoutils::formated("%s_u_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
 		f_g[0] = getMem().addBuffer(homoutils::formated("%s_f_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
 		r_g[0] = getMem().addBuffer(homoutils::formated("%s_r_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
-		total_gpu += nv * 3 * sizeof(VT);
+		u_g[1] = getMem().addBuffer(homoutils::formated("%s_u1_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
+		f_g[1] = getMem().addBuffer(homoutils::formated("%s_f1_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
+		r_g[1] = getMem().addBuffer(homoutils::formated("%s_r1_%d", getName().c_str()), nv * sizeof(VT))->data<VT>();
+		total_gpu += nv * 6 * sizeof(VT);
 		total_cpu += total_nv * 3 * sizeof(VT);
 	}
 	else{
@@ -290,12 +298,15 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	}
 	else {
 		int total_nv = (cellReso[0] / MIN_TRANSFER * cellReso[1] / MIN_TRANSFER * cellReso[2] / MIN_TRANSFER) * nv;
-		for (int i = 0; i < 3; i++) {
-			uchar.push_back(std::vector<VT>(total_nv, 0));
-			uchar_h[i] = getMem().addBuffer(homoutils::formated("%s_uchost_%d_%d", getName().c_str(), i), nv * sizeof(VT), Managed)->data<VT>();
-			v_reset(uchar_h[i], nv);
-			total_gpu += nv * sizeof(VT);
-			total_cpu += nv * sizeof(VT);
+		if (is_root) {
+			for (int i = 0; i < 3; i++) {
+				uchar.push_back(std::vector<VT>(total_nv, 0));
+				cudaHostRegister(uchar[i].data(), uchar[i].size() * sizeof(float), cudaHostRegisterPortable);
+				uchar_h[i] = getMem().addBuffer(homoutils::formated("%s_uchost_%d_%d", getName().c_str(), i), nv * sizeof(VT), Managed)->data<VT>();
+				v_reset(uchar_h[i], nv);
+				total_gpu += nv * sizeof(VT);
+				total_cpu += nv * sizeof(VT);
+			}
 		}
 	}
 	vertflag = getMem().addBuffer<VertexFlags>(homoutils::formated("%s_vflag", getName().c_str()), nv)->data<VertexFlags>();
@@ -307,9 +318,22 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 		total_gpu += ne * sizeof(float);
 		rho_g = getMem().addBuffer(homoutils::formated("%s_rho", getName().c_str()), ne * sizeof(float))->data<float>();
 	}
-
+	// tempBuffer is defined here for transfer
+	if (is_root && use_host_memory) {
+		getMem().addBuffer("temp_rho0", pow(MIN_TRANSFER + 2, 3) * sizeof(VT));
+		getMem().addBuffer("temp_rho1", pow(MIN_TRANSFER + 2, 3) * sizeof(VT));
+		total_gpu += 2 * pow(MIN_TRANSFER + 2, 3) * sizeof(VT);
+		stream.resize(2);
+		cudaStreamCreate(&stream[0]);
+		cudaStreamCreate(&stream[1]);
+		ready_event.resize(2);
+		cudaEventCreate(&ready_event[0]);
+		cudaEventCreate(&ready_event[1]);
+		cal_event.resize(2);
+		cudaEventCreate(&cal_event[0]);
+		cudaEventCreate(&cal_event[1]);
+	}
 	printf("%s allocated %zd MB GPU memory, %zd MB CPU memory\n", getName().c_str(), total_gpu / 1024 / 1024, total_cpu / 1024 / 1024);
-
 	return total_gpu;
 }
 
@@ -410,7 +434,6 @@ void Grid_H::useFchar(int k)
 {
 	useGrid_g();
 	if (cellReso[0] >= MIN_TRANSFER) {
-		// todo
 		enforce_unit_macro_strain_host(k);
 		pad_vertex_data_host(f_h);
 	}
@@ -425,60 +448,551 @@ void Grid_H::useFchar(int k)
 	}
 }
 
+//void Grid_H::pad_vertex_data_host(std::vector<float>& vec) {
+//	int off_set = 0;
+//	// for each block init block
+//	int block_numx = (cellReso[0] / MIN_TRANSFER);
+//	int block_numy = (cellReso[1] / MIN_TRANSFER);
+//	int block_numz = (cellReso[2] / MIN_TRANSFER);
+//
+//	int block_num = block_numx * block_numy * block_numz;
+//	int block_len = n_gscells();
+//
+//	for (int block_id = 0; block_id < block_num; block_id++) {
+//		off_set = block_len * block_id;
+//		int off_setx = block_id % block_numx, off_sety = block_id / block_numx % block_numy, off_setz = block_id / (block_numx * block_numy);
+//		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
+//			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+//				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+//					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2) {
+//						int pos[3] = { i, j, k };
+//						int boundary = lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+//						int gsid_tar = block_id * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+//						if (i == 0) {
+//							off_setx = (off_setx - 1 + block_numx) % block_numx;
+//							pos[0] = MIN_TRANSFER;
+//						}
+//						if (i == MIN_TRANSFER + 2) {
+//							off_setx = (off_setx + 1) % block_numx;
+//							pos[0] = 2;
+//						}
+//						if (j == 0) {
+//							off_sety = (off_sety - 1 + block_numy) % block_numy;
+//							pos[1] = MIN_TRANSFER;
+//						}
+//						if (j == MIN_TRANSFER + 2) {
+//							off_sety = (off_sety + 1) % block_numy;
+//							pos[1] = 2;
+//						}
+//						if (k == 0) {
+//							off_setz = (off_setz - 1 + block_numz) % block_numz;
+//							pos[2] = MIN_TRANSFER;
+//						}
+//						if (k == MIN_TRANSFER + 2) {
+//							off_setz = (off_setz + 1) % block_numz;
+//							pos[2] = 2;
+//						}
+//						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
+//						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+//						vec[gsid_tar] = vec[gsid_src];
+//					}
+//				}
+//			}
+//		}
+//	}
+//}
 void Grid_H::pad_vertex_data_host(std::vector<float>& vec) {
-	int off_set = 0;
-	// for each block init block
-	int block_numx = (cellReso[0] / MIN_TRANSFER);
-	int block_numy = (cellReso[1] / MIN_TRANSFER);
-	int block_numz = (cellReso[2] / MIN_TRANSFER);
-
+	int block_numx = cellReso[0] / MIN_TRANSFER;
+	int block_numy = cellReso[1] / MIN_TRANSFER;
+	int block_numz = cellReso[2] / MIN_TRANSFER;
 	int block_num = block_numx * block_numy * block_numz;
-	int block_len = n_gscells();
+	const unsigned int num_threads = std::thread::hardware_concurrency();
+	std::vector<std::thread> workers;
 
-	for (int block_id = 0; block_id < block_num; block_id++) {
-		off_set = block_len * block_id;
-		int off_setx = block_id % block_numx, off_sety = block_id / block_numx % block_numy, off_setz = block_id / (block_numx * block_numy);
-		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
-			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
-				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
-					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2) {
-						int pos[3] = { i, j, k };
-						int boundary = lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						int gsid_tar = block_id * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						if (i == 0) {
-							off_setx = (off_setx - 1 + block_numx) % block_numx;
-							pos[0] = MIN_TRANSFER;
-						}
-						if (i == MIN_TRANSFER + 2) {
-							off_setx = (off_setx + 1) % block_numx;
-							pos[0] = 2;
-						}
-						if (j == 0) {
-							off_sety = (off_sety - 1 + block_numy) % block_numy;
-							pos[1] = MIN_TRANSFER;
-						}
-						if (j == MIN_TRANSFER + 2) {
-							off_sety = (off_sety + 1) % block_numy;
-							pos[1] = 2;
-						}
-						if (k == 0) {
-							off_setz = (off_setz - 1 + block_numz) % block_numz;
-							pos[2] = MIN_TRANSFER;
-						}
-						if (k == MIN_TRANSFER + 2) {
-							off_setz = (off_setz + 1) % block_numz;
-							pos[2] = 2;
-						}
-						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
-						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						vec[gsid_tar] = vec[gsid_src];
-					}
-				}
+	const int blocks_per_thread = block_num / num_threads;
+	int remaining_blocks = block_num % num_threads;
+	int start_block = 0;
+
+	for (unsigned int t = 0; t < num_threads; ++t) {
+		int end_block = start_block + blocks_per_thread + (t < remaining_blocks ? 1 : 0);
+		workers.emplace_back([&, start_block, end_block]() {
+			for (int block_id = start_block; block_id < end_block; ++block_id) {
+				process_single_block(block_id, vec, block_numx, block_numy, block_numz);
 			}
-		}
+			});
+		start_block = end_block;
+	}
+
+	for (auto& th : workers) {
+		th.join();
 	}
 }
 
+void Grid_H::process_single_block(int block_id, std::vector<float>& vec,
+	int block_numx, int block_numy, int block_numz) {
+	int off_setx = block_id % block_numx;
+	int off_sety = (block_id / block_numx) % block_numy;
+	int off_setz = block_id / (block_numx * block_numy);
+
+	auto process_i_face = [&](int i_boundary) {
+		int i = (i_boundary == 0) ? 0 : MIN_TRANSFER + 2;
+		for (int k = 0; k < MIN_TRANSFER + 3; ++k) {
+			for (int j = 0; j < MIN_TRANSFER + 3; ++j) {
+				int pos[3] = { i, j, k };
+				int gsid_tar = block_id * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+
+				int new_offx = (i == 0) ?
+					(off_setx - 1 + block_numx) % block_numx :
+					(off_setx + 1) % block_numx;
+				pos[0] = (i == 0) ? MIN_TRANSFER : 2;
+
+				int src_bid = new_offx + off_sety * block_numx + off_setz * block_numx * block_numy;
+				int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+				vec[gsid_tar] = vec[gsid_src];
+			}
+		}
+		};
+	process_i_face(0);
+	process_i_face(1);
+
+	auto process_j_face = [&](int j_boundary) {
+		int j = (j_boundary == 0) ? 0 : MIN_TRANSFER + 2;
+		for (int k = 0; k < MIN_TRANSFER + 3; ++k) {
+			for (int i = 1; i < MIN_TRANSFER + 2; ++i) {
+				int pos[3] = { i, j, k };
+				int gsid_tar = block_id * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+
+				int new_offy = (j == 0) ?
+					(off_sety - 1 + block_numy) % block_numy :
+					(off_sety + 1) % block_numy;
+				pos[1] = (j == 0) ? MIN_TRANSFER : 2;
+
+				int src_bid = off_setx + new_offy * block_numx + off_setz * block_numx * block_numy;
+				int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+				vec[gsid_tar] = vec[gsid_src];
+			}
+		}
+		};
+	process_j_face(0);
+	process_j_face(1);
+
+	auto process_k_face = [&](int k_boundary) {
+		int k = (k_boundary == 0) ? 0 : MIN_TRANSFER + 2;
+		for (int j = 1; j < MIN_TRANSFER + 2; ++j) {
+			for (int i = 1; i < MIN_TRANSFER + 2; ++i) {
+				int pos[3] = { i, j, k };
+				int gsid_tar = block_id * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+
+				int new_offz = (k == 0) ?
+					(off_setz - 1 + block_numz) % block_numz :
+					(off_setz + 1) % block_numz;
+				pos[2] = (k == 0) ? MIN_TRANSFER : 2;
+
+				int src_bid = off_setx + off_sety * block_numx + new_offz * block_numx * block_numy;
+				int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+				vec[gsid_tar] = vec[gsid_src];
+			}
+		}
+		};
+	process_k_face(0);
+	process_k_face(1);
+}
+void Grid_H::process_block_boundary(int bid, std::vector<VT>& v) {
+	const int block_numx = cellReso[0] / MIN_TRANSFER;
+	const int block_numy = cellReso[1] / MIN_TRANSFER;
+	const int block_numz = cellReso[2] / MIN_TRANSFER;
+
+	int off_setx = bid % block_numx;
+	int off_sety = (bid / block_numx) % block_numy;
+	int off_setz = bid / (block_numx * block_numy);
+
+	auto process_right_face = [&](int axis) { // axis:0=x,1=y,2=z
+		for (int k = 1; k < MIN_TRANSFER + 2; ++k) {
+			for (int j = 1; j < MIN_TRANSFER + 2; ++j) {
+				for (int i = 1; i < MIN_TRANSFER + 2; ++i) {
+					int pos[3] = { i, j, k };
+					if (pos[axis] != MIN_TRANSFER + 1) continue;
+
+					int src_offx = off_setx + (axis == 0);
+					int src_offy = off_sety + (axis == 1);
+					int src_offz = off_setz + (axis == 2);
+
+					src_offx = (src_offx + block_numx) % block_numx;
+					src_offy = (src_offy + block_numy) % block_numy;
+					src_offz = (src_offz + block_numz) % block_numz;
+
+					int gsid_tar = bid * n_gsvertices() +
+						lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+
+					pos[axis] = 1;
+					int src_bid = src_offx + src_offy * block_numx +
+						src_offz * block_numx * block_numy;
+					int gsid_src = src_bid * n_gsvertices() +
+						lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+
+					v[gsid_tar] = v[gsid_src];
+				}
+			}
+		}
+		};
+
+	auto process_padding_layer = [&](int axis, int layer) {
+		for (int k = 0; k < MIN_TRANSFER + 3; ++k) {
+			for (int j = 0; j < MIN_TRANSFER + 3; ++j) {
+				for (int i = 0; i < MIN_TRANSFER + 3; ++i) {
+					int pos[3] = { i, j, k };
+					if (pos[axis] != layer) continue;
+
+					int src_offx = off_setx - (axis == 0 && layer == 0) +
+						(axis == 0 && layer == MIN_TRANSFER + 2);
+					int src_offy = off_sety - (axis == 1 && layer == 0) +
+						(axis == 1 && layer == MIN_TRANSFER + 2);
+					int src_offz = off_setz - (axis == 2 && layer == 0) +
+						(axis == 2 && layer == MIN_TRANSFER + 2);
+
+					src_offx = (src_offx + block_numx) % block_numx;
+					src_offy = (src_offy + block_numy) % block_numy;
+					src_offz = (src_offz + block_numz) % block_numz;
+
+					int gsid_tar = bid * n_gsvertices() +
+						lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+
+					pos[axis] = (layer == 0) ? MIN_TRANSFER : 2;
+					int src_bid = src_offx + src_offy * block_numx +
+						src_offz * block_numx * block_numy;
+					int gsid_src = src_bid * n_gsvertices() +
+						lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+
+					v[gsid_tar] = v[gsid_src];
+				}
+			}
+		}
+		};
+
+	process_right_face(0);
+	process_right_face(1);
+	process_right_face(2);
+
+	process_padding_layer(0, 0);
+	process_padding_layer(0, MIN_TRANSFER + 2);
+	process_padding_layer(1, 0);
+	process_padding_layer(1, MIN_TRANSFER + 2);
+	process_padding_layer(2, 0);
+	process_padding_layer(2, MIN_TRANSFER + 2);
+}
+
+void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
+	// seam align to right 
+	// update padding
+	int resox = cellReso[0];
+	int resoy = cellReso[1];
+	int resoz = cellReso[2];
+	int off_set = 0;
+
+	int block_numx = (resox / MIN_TRANSFER);
+	int block_numy = (resoy / MIN_TRANSFER);
+	int block_numz = (resoz / MIN_TRANSFER);
+
+	int block_num = block_numx * block_numy * block_numz;
+	// enforce_period_vertex
+	const unsigned num_threads = std::thread::hardware_concurrency();
+	std::vector<std::thread> workers;
+	std::atomic<int> next_bid{ 0 };
+
+	for (unsigned t = 0; t < num_threads; ++t) {
+		workers.emplace_back([&, block_num] {
+			while (true) {
+				const int bid = next_bid.fetch_add(1, std::memory_order_relaxed);
+				if (bid >= block_num) break;
+
+				const std::vector<int> offset = {
+					bid % block_numx,
+					(bid / block_numx) % block_numy,
+					bid / (block_numx * block_numy)
+				};
+				for (int i = 1; i < MIN_TRANSFER + 2; i++) {
+					for (int j = 1; j < MIN_TRANSFER + 2; j++) {
+						{
+							int pos[3] = { MIN_TRANSFER + 1, i, j };
+							const int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto new_offset = offset;
+							new_offset[0] = (new_offset[0] + 1) % block_numx;
+							pos[0] = 1;
+							if (i == MIN_TRANSFER + 1) {
+								pos[1] = 1;
+								new_offset[1] = (new_offset[1] + 1) % block_numy;
+							}
+							if (j == MIN_TRANSFER + 1) {
+								pos[2] = 1;
+								new_offset[2] = (new_offset[2] + 1) % block_numz;
+							}
+							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
+							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+						{
+							int pos[3] = { i, MIN_TRANSFER + 1, j };
+							const int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto new_offset = offset;
+							new_offset[1] = (new_offset[1] + 1) % block_numy;
+							pos[1] = 1;
+							if (i == MIN_TRANSFER + 1) {
+								pos[0] = 1;
+								new_offset[0] = (new_offset[0] + 1) % block_numx;
+							}
+							if (j == MIN_TRANSFER + 1) {
+								pos[2] = 1;
+								new_offset[2] = (new_offset[2] + 1) % block_numz;
+							}
+							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
+							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+						{
+							int pos[3] = { i, j, MIN_TRANSFER + 1 };
+							const int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto new_offset = offset;
+							new_offset[2] = (new_offset[2] + 1) % block_numz;
+							pos[2] = 1;
+							if (i == MIN_TRANSFER + 1) {
+								pos[0] = 1;
+								new_offset[0] = (new_offset[0] + 1) % block_numx;
+							}
+							if (j == MIN_TRANSFER + 1) {
+								pos[1] = 1;
+								new_offset[1] = (new_offset[1] + 1) % block_numy;
+							}
+							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
+							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+				}
+
+				for (int i : {0, MIN_TRANSFER + 2}) {
+					for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+						for (int k = 0; k < MIN_TRANSFER + 3; k++) {
+							int pos[3] = { i, j, k };
+							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsetx = offset;
+							offsetx[0] = (i == 0) ?
+								((offsetx[0] - 1 + block_numx) % block_numx) :
+								(offsetx[0] + 1) % block_numx;
+							pos[0] = (i == 0) ? MIN_TRANSFER : 2;
+
+							offsetx[1] = (j == 0) ?
+								((offsetx[1] - 1 + block_numy) % block_numy) :
+								(j == MIN_TRANSFER + 2) ? (offsetx[1] + 1) % block_numy : offsetx[1];
+							pos[1] = (j == 0) ? MIN_TRANSFER : (j == MIN_TRANSFER + 2) ? 2 : j;
+
+							offsetx[2] = (k == 0) ?
+								((offsetx[2] - 1 + block_numz) % block_numz) :
+								(k == MIN_TRANSFER + 2) ? (offsetx[2] + 1) % block_numz : offsetx[2];
+							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
+							int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+							int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+				}
+
+				for (int j : {0, MIN_TRANSFER + 2}) {
+					for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+						for (int k = 0; k < MIN_TRANSFER + 3; k++) {
+							int pos[3] = { i, j, k };
+							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsety = offset;
+
+							offsety[1] = (j == 0) ?
+								((offsety[1] - 1 + block_numy) % block_numy) :
+								(offsety[1] + 1) % block_numy;
+							pos[1] = (j == 0) ? MIN_TRANSFER : 2;
+
+							offsety[0] = (i == 0) ?
+								((offsety[0] - 1 + block_numx) % block_numx) :
+								(i == MIN_TRANSFER + 2) ? (offsety[0] + 1) % block_numx : offsety[0];
+							pos[0] = (i == 0) ? MIN_TRANSFER : (i == MIN_TRANSFER + 2) ? 2 : i;
+
+							offsety[2] = (k == 0) ?
+								((offsety[2] - 1 + block_numz) % block_numz) :
+								(k == MIN_TRANSFER + 2) ? (offsety[2] + 1) % block_numz : offsety[2];
+							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
+
+							const int src_bid = offsety[0] + offsety[1] * block_numx + offsety[2] * (block_numx * block_numy);
+							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+				}
+
+				for (int k : {0, MIN_TRANSFER + 2}) {
+					for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+						for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+							int pos[3] = { i, j, k };
+							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsetz = offset;
+
+							offsetz[2] = (k == 0) ?
+								((offsetz[2] - 1 + block_numz) % block_numz) :
+								(offsetz[2] + 1) % block_numz;
+							pos[2] = (k == 0) ? MIN_TRANSFER : 2;
+
+							offsetz[0] = (i == 0) ?
+								((offsetz[0] - 1 + block_numx) % block_numx) :
+								(i == MIN_TRANSFER + 2) ? (offsetz[0] + 1) % block_numx : offsetz[0];
+							pos[0] = (i == 0) ? MIN_TRANSFER : (i == MIN_TRANSFER + 2) ? 2 : i;
+
+							offsetz[1] = (j == 0) ?
+								((offsetz[1] - 1 + block_numy) % block_numy) :
+								(j == MIN_TRANSFER + 2) ? (offsetz[1] + 1) % block_numy : offsetz[1];
+							pos[1] = (j == 0) ? MIN_TRANSFER : (j == MIN_TRANSFER + 2) ? 2 : j;
+
+							const int src_bid = offsetz[0] + offsetz[1] * block_numx + offsetz[2] * (block_numx * block_numy);
+							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+				}
+			}
+		});
+	}
+
+	for (auto& th : workers) {
+		if (th.joinable()) th.join();
+	}
+}
+//void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
+//	int resox = cellReso[0];
+//	int resoy = cellReso[1];
+//	int resoz = cellReso[2];
+//
+//	int block_numx = resox / MIN_TRANSFER;
+//	int block_numy = resoy / MIN_TRANSFER;
+//	int block_numz = resoz / MIN_TRANSFER;
+//	int block_num = block_numx * block_numy * block_numz;
+//
+//	auto parallel_stage1 = [&](int start_bid, int end_bid) {
+//		for (int bid = start_bid; bid < end_bid; ++bid) {
+//			for (int k = 1; k < MIN_TRANSFER + 2; ++k) {
+//				for (int j = 1; j < MIN_TRANSFER + 2; ++j) {
+//					for (int i = 1; i < MIN_TRANSFER + 2; ++i) {
+//						int off_setx = bid % block_numx;
+//						int off_sety = (bid / block_numx) % block_numy;
+//						int off_setz = bid / (block_numx * block_numy);
+//
+//						if (i == MIN_TRANSFER + 1 || j == MIN_TRANSFER + 1 || k == MIN_TRANSFER + 1) {
+//							int pos[3] = { i, j, k };
+//							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+//
+//							if (i == MIN_TRANSFER + 1) {
+//								off_setx = (off_setx + 1) % block_numx;
+//								pos[0] = 1;
+//							}
+//							else pos[0] = i;
+//
+//							if (j == MIN_TRANSFER + 1) {
+//								off_sety = (off_sety + 1) % block_numy;
+//								pos[1] = 1;
+//							}
+//							else pos[1] = j;
+//
+//							if (k == MIN_TRANSFER + 1) {
+//								off_setz = (off_setz + 1) % block_numz;
+//								pos[2] = 1;
+//							}
+//							else pos[2] = k;
+//
+//							int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
+//							int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+//							v[gsid_tar] = v[gsid_src];
+//						}
+//					}
+//				}
+//			}
+//		}
+//		};
+//
+//	auto parallel_stage2 = [&](int start_bid, int end_bid) {
+//		for (int bid = start_bid; bid < end_bid; ++bid) {
+//			for (int k = 0; k < MIN_TRANSFER + 3; ++k) {
+//				for (int j = 0; j < MIN_TRANSFER + 3; ++j) {
+//					for (int i = 0; i < MIN_TRANSFER + 3; ++i) {
+//						int off_setx = bid % block_numx;
+//						int off_sety = (bid / block_numx) % block_numy;
+//						int off_setz = bid / (block_numx * block_numy);
+//
+//						if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2) {
+//							int pos[3] = { i, j, k };
+//							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+//
+//							if (i == 0) {
+//								off_setx = (off_setx - 1 + block_numx) % block_numx;
+//								pos[0] = MIN_TRANSFER;
+//							}
+//							else if (i == MIN_TRANSFER + 2) {
+//								off_setx = (off_setx + 1) % block_numx;
+//								pos[0] = 2;
+//							}
+//							else pos[0] = i;
+//
+//							if (j == 0) {
+//								off_sety = (off_sety - 1 + block_numy) % block_numy;
+//								pos[1] = MIN_TRANSFER;
+//							}
+//							else if (j == MIN_TRANSFER + 2) {
+//								off_sety = (off_sety + 1) % block_numy;
+//								pos[1] = 2;
+//							}
+//							else pos[1] = j;
+//
+//							if (k == 0) {
+//								off_setz = (off_setz - 1 + block_numz) % block_numz;
+//								pos[2] = MIN_TRANSFER;
+//							}
+//							else if (k == MIN_TRANSFER + 2) {
+//								off_setz = (off_setz + 1) % block_numz;
+//								pos[2] = 2;
+//							}
+//							else pos[2] = k;
+//
+//							int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
+//							int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+//							v[gsid_tar] = v[gsid_src];
+//						}
+//					}
+//				}
+//			}
+//		}
+//		};
+//
+//	{
+//		const unsigned num_threads = std::thread::hardware_concurrency();
+//		std::vector<std::thread> workers;
+//		const int blocks_per_thread = block_num / num_threads;
+//		int remaining = block_num % num_threads;
+//		int start = 0;
+//		for (unsigned t = 0; t < num_threads; ++t) {
+//			int end = start + blocks_per_thread + (t < remaining ? 1 : 0);
+//			workers.emplace_back(parallel_stage1, start, end);
+//			start = end;
+//		}
+//		for (auto& th : workers) th.join();
+//	}
+//
+//	{
+//		const unsigned num_threads = std::thread::hardware_concurrency();
+//		std::vector<std::thread> workers;
+//		const int blocks_per_thread = block_num / num_threads;
+//		int remaining = block_num % num_threads;
+//		int start = 0;
+//		for (unsigned t = 0; t < num_threads; ++t) {
+//			int end = start + blocks_per_thread + (t < remaining ? 1 : 0);
+//			workers.emplace_back(parallel_stage2, start, end);
+//			start = end;
+//		}
+//		for (auto& th : workers) th.join();
+//	}
+//}
 void Grid_H::reset_displacement(void)
 {
 	v_reset(u_g[0]);
@@ -898,121 +1412,6 @@ void homo::Grid_H::enforce_period_boundary(VT* v[1], bool additive /*= false*/)
 	//if (additive) { throw std::runtime_error("additive should never be set"); }
 	enforce_period_vertex(v, additive);
 	pad_vertex_data(v);
-}
-void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
-	// seam align to right 
-	// update padding
-	int resox = cellReso[0];
-	int resoy = cellReso[1];
-	int resoz = cellReso[2];
-	int off_set = 0;
-
-	int block_numx = (resox / MIN_TRANSFER);
-	int block_numy = (resoy / MIN_TRANSFER);
-	int block_numz = (resoz / MIN_TRANSFER);
-
-	int block_num = block_numx * block_numy * block_numz;
-	// enforce_period_vertex
-	for (int bid = 0; bid < block_num; bid++) {
-		for (int k = 1; k < MIN_TRANSFER + 2; k++) {
-			for (int j = 1; j < MIN_TRANSFER + 2; j++) {
-				for (int i = 1; i < MIN_TRANSFER + 2; i++) {
-					// update or initialize paddings
-					int off_setx = bid % block_numx, off_sety = bid / block_numx % block_numy, off_setz = bid / (block_numx * block_numy);
-					// seam align to right also can say period boundary
-					if (i == MIN_TRANSFER + 1 || j == MIN_TRANSFER + 1 || k == MIN_TRANSFER + 1) {
-						int pos[3] = { i, j, k };
-						int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						if (i == MIN_TRANSFER + 1) {
-							off_setx = (off_setx + 1) % block_numx;
-							pos[0] = 1;
-						}
-						else {
-							pos[0] = i;
-						}
-						if (j == MIN_TRANSFER + 1) {
-							off_sety = (off_sety + 1) % block_numy;
-							pos[1] = 1;
-						}
-						else {
-							pos[1] = j;
-						}
-						if (k == MIN_TRANSFER + 1) {
-							off_setz = (off_setz + 1) % block_numz;
-							pos[2] = 1;
-						}
-						else {
-							pos[2] = k;
-						}
-						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
-						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						//if (1) {
-						//	printf("pos tar:(%d, %d, %d), pos src:(%d, %d, %d)\n", i, j, k, pos[0], pos[1], pos[2]);
-						//	printf("block tar:(%d, %d, %d)\n", off_setx, off_sety, off_setz);
-						//}
-						v[gsid_tar] = v[gsid_src];
-					}
-				}
-			}
-		}
-	}
-	// pad_vertex_data
-	for (int bid = 0; bid < block_num; bid++) {
-		for (int k = 0; k < MIN_TRANSFER + 3; k++) {
-			for (int j = 0; j < MIN_TRANSFER + 3; j++) {
-				for (int i = 0; i < MIN_TRANSFER + 3; i++) {
-					// update or initialize paddings
-					int off_setx = bid % block_numx, off_sety = bid / block_numx % block_numy, off_setz = bid / (block_numx * block_numy);
-					// seam align to right also can say period boundary
-					if (i == 0 || i == MIN_TRANSFER + 2 || j == 0 || j == MIN_TRANSFER + 2 || k == 0 || k == MIN_TRANSFER + 2) {
-						int pos[3] = { i, j, k };
-						int boundary = lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						if (i == 0) {
-							off_setx = (off_setx - 1 + block_numx) % block_numx;
-							pos[0] = MIN_TRANSFER;
-						}
-						else if (i == MIN_TRANSFER + 2) {
-							off_setx = (off_setx + 1) % block_numx;
-							pos[0] = 2;
-						}
-						else {
-							pos[0] = i;
-						}
-						if (j == 0) {
-							off_sety = (off_sety - 1 + block_numy) % block_numy;
-							pos[1] = MIN_TRANSFER;
-						}
-						else if (j == MIN_TRANSFER + 2) {
-							off_sety = (off_sety + 1) % block_numy;
-							pos[1] = 2;
-						}
-						else {
-							pos[1] = j;
-						}
-						if (k == 0) {
-							off_setz = (off_setz - 1 + block_numz) % block_numz;
-							pos[2] = MIN_TRANSFER;
-						}
-						else if (k == MIN_TRANSFER + 2) {
-							off_setz = (off_setz + 1) % block_numz;
-							pos[2] = 2;
-						}
-						else {
-							pos[2] = k;
-						}
-						int src_bid = off_setx + off_sety * block_numx + off_setz * block_numx * block_numy;
-						int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
-						//if (1) {
-						//	printf("pos tar:(%d, %d, %d), pos src:(%d, %d, %d)\n", i, j, k, pos[0], pos[1], pos[2]);
-						//	printf("block tar:(%d, %d, %d)\n", off_setx, off_sety, off_setz);
-						//}
-						v[gsid_tar] = v[gsid_src];
-					}
-				}
-			}
-		}
-	}
 }
 
 void homo::Grid_H::translateForce(int type_, VT* v[1]) {

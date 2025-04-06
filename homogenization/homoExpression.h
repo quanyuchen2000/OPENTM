@@ -201,7 +201,7 @@ namespace homo {
 				//data2matrix_h("dC", &gradC_[0][0], 6, 6);
 				counter.reset();
 				// do something
-				domain_.Sensitivity_host(gradH_, sensitiveField, true);
+				domain_.Sensitivity_host(gradH_, sensitiveField, false);
 				// densityField.backward(densityField.diff());
 				return;
 			}

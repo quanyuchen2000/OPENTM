@@ -366,6 +366,8 @@ void homo::Homogenization_H::heatMatrix(double C[3][3]) {
 			int offset = (bx + block_numx * by + block_numx * block_numy * bz) * grid->n_gsvertices();
 			// give in rho_g
 			grid->use_block_rho(blockid);
+			float* tmp = getMem().getBuffer("temp_rho0")->data<float>();
+			grid->update_host(tmp);
 			// update blocked u to grid->uchar_h
 			devArray_t<devArray_t<VT*, 1>, 3> ucharlist;
 			for (int i = 0; i < 3; i++) {
@@ -480,8 +482,7 @@ __global__ void Sensitivity_kernel_opt_host_H(
 	devArray_t<devArray_t<float*, 1>, 3> ucharlist,
 	T* rholist,
 	devArray_t<devArray_t<float, 3>, 3> dc,
-	float* sens, float volume,
-	int pitchT, bool lexiOrder)
+	float* sens, float volume, bool lexiOrder)
 {
 	__shared__ float KE[8][8];
 	__shared__ float dC[3][3];
@@ -490,31 +491,24 @@ __global__ void Sensitivity_kernel_opt_host_H(
 	__shared__ float uchar[3][8][32];
 	__shared__ float gSum[3][3][4][32];
 
+	loadTemplateMatrix_H(KE);
+
 	int warpId = threadIdx.x / 32;
 	int laneId = threadIdx.x % 32;
 
 	if (warpId < 3 && laneId == 0) {
-		if (warpId == 0) {
-			elementMacroDisplacement_H<float, 0>(uChi[warpId]);
-		}
-		else if (warpId == 1) {
-			elementMacroDisplacement_H<float, 1>(uChi[warpId]);
-		}
-		else if (warpId == 2) {
-			elementMacroDisplacement_H<float, 2>(uChi[warpId]);
-		}
+		if (warpId == 0) { elementMacroDisplacement_H<float, 0>(uChi[warpId]); }
+		else if (warpId == 1) { elementMacroDisplacement_H<float, 1>(uChi[warpId]); }
+		else if (warpId == 2) { elementMacroDisplacement_H<float, 2>(uChi[warpId]); }
 	}
 
 	if (threadIdx.x < 9) {
 		dC[threadIdx.x / 3][threadIdx.x % 3] = dc[threadIdx.x / 3][threadIdx.x % 3];
 	}
 
-	loadTemplateMatrix_H(KE);
-
 	bool is_ghost = false;
 
 	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
-
 
 	int vid = blockIdx.x * 32 + laneId;
 
@@ -526,12 +520,12 @@ __global__ void Sensitivity_kernel_opt_host_H(
 
 	GridVertexIndex indexer(MIN_TRANSFER, MIN_TRANSFER, MIN_TRANSFER);
 
+	int elementId;
+
 	if (!is_ghost) {
 		indexer.locate(vid, vflag.get_gscolor(), gGsVertexEnd);
+		if (!is_ghost) elementId = indexer.neighElement(0, gGsCellEnd, gGsCellReso).getId();
 	}
-
-	int elementId;
-	if (!is_ghost) elementId = indexer.neighElement(0, gGsCellEnd, gGsCellReso).getId();
 
 	float vol_inv = 1.f / volume;
 
@@ -618,6 +612,9 @@ __global__ void Sensitivity_kernel_opt_host_H(
 		}
 		else {
 			auto p = indexer.getPos();
+			//if ( p.z == 2 ) {
+			//	printf("(%d,%d,%d):%f\n", p.x, p.y, p.z, s);
+			//}
 			// p -> element pos -> element pos without padding 
 			p.x -= 2; p.y -= 2; p.z -= 2;
 			if (p.x < 0 || p.y < 0 || p.z < 0) print_exception;
@@ -789,71 +786,82 @@ __global__ void Sensitivity_kernel_opt_2_H(
 
 void homo::Homogenization_H::Sensitivity_host(float dC[3][3], std::vector<float> &sens, bool lexiOrder /*= false*/) 
 {
-	//grid->useGrid_g();
-	//devArray_t<devArray_t<float, 3>, 3> dc;
-	//for (int i = 0; i < 3; i++) {
-	//	for (int j = 0; j < 3; j++) {
-	//		dc[i][j] = dC[i][j];
-	//	}
-	//}
+	grid->useGrid_g();
+	lexiOrder = true;
+	sens.resize(grid->cellReso[0]* grid->cellReso[1] * grid->cellReso[2], 0);
+	devArray_t<devArray_t<float, 3>, 3> dc;
+	for (int i = 0; i < 3; i++) {
+		for (int j = 0; j < 3; j++) {
+			dc[i][j] = dC[i][j];
+		}
+	}
 
-	//int nv = grid->n_gsvertices();
-	//auto vflags = grid->vertflag;
-	//auto eflags = grid->cellflag;
-	//auto rholist = grid->rho_g;
-	//// here volume = 1 which is the real scale. 1*1*1
-	//float volume = 1.0;
-	//size_t grid_size, block_size;
-	//make_kernel_param(&grid_size, &block_size, nv, 256);
-	//if (!config.useManagedMemory) {
-	//	NO_SUPPORT_ERROR;
-	//}
-	//else {
-	//	printf("Sensitivity analysis using managed memory...\n");
-	//	auto cellReso = grid->cellReso;
-	//	int block_numx = (cellReso[0] / MIN_TRANSFER);
-	//	int block_numy = (cellReso[1] / MIN_TRANSFER);
-	//	int block_numz = (cellReso[2] / MIN_TRANSFER);
-	//	int block_num = block_numx * block_numy * block_numz;
-	//	int block_len = grid->n_gsvertices();
-	//	for (int blockid = 0; blockid < block_num; blockid++) {
-	//		int bx = blockid % block_numx;
-	//		int by = (blockid / block_numx) % block_numy;
-	//		int bz = blockid / (block_numx * block_numy);
-	//		int offset = (bx + block_numx * by + block_numx * block_numy * bz) * grid->n_gsvertices();
-	//		// give in rho_g
-	//		grid->use_block_rho(blockid);
-	//		// update blocked u to grid->uchar_h
-	//		devArray_t<devArray_t<VT*, 1>, 3> uchar;
-	//		for (int i = 0; i < 3; i++) {
-	//			cudaMemcpy(grid->uchar_h[i], grid->uchar[i].data() + offset, grid->n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice);
-	//			uchar[i][0] = grid->uchar_h[i];
-	//		}
-	//		devArray_t<devArray_t<float*, 1>, 3> dst;
-	//		dst[0][0] = (grid->f_g[0]);
-	//		dst[1][0] = (grid->u_g[0]);
-	//		dst[2][0] = (grid->r_g[0]);
+	int nv = grid->n_gsvertices();
+	auto vflags = grid->vertflag;
+	auto eflags = grid->cellflag;
+	auto rholist = grid->rho_g;
+	// here volume = 1 which is the real scale. 1*1*1
+	float volume = 1.0;
+	size_t grid_size, block_size;
+	make_kernel_param(&grid_size, &block_size, nv, 256);
+	if (!config.useManagedMemory) {
+		NO_SUPPORT_ERROR;
+	}
+	else {
+		printf("Sensitivity analysis using managed memory...\n");
+		auto cellReso = grid->cellReso;
+		int block_numx = (cellReso[0] / MIN_TRANSFER);
+		int block_numy = (cellReso[1] / MIN_TRANSFER);
+		int block_numz = (cellReso[2] / MIN_TRANSFER);
+		int block_num = block_numx * block_numy * block_numz;
+		int block_len = grid->n_gsvertices();
+		for (int blockid = 0; blockid < block_num; blockid++) {
+			int bx = blockid % block_numx;
+			int by = (blockid / block_numx) % block_numy;
+			int bz = blockid / (block_numx * block_numy);
+			int offset = (bx + block_numx * by + block_numx * block_numy * bz) * grid->n_gsvertices();
+			// give in rho_g
+			grid->use_block_rho(blockid);
+			float* tmp = getMem().getBuffer("temp_rho0")->data<float>();
+			grid->update_host(tmp);
+			// update blocked u to grid->uchar_h
+			devArray_t<devArray_t<VT*, 1>, 3> uchar;
+			for (int i = 0; i < 3; i++) {
+				cudaMemcpy(grid->uchar_h[i], grid->uchar[i].data() + offset, grid->n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice);
+				uchar[i][0] = grid->uchar_h[i];
+			}
+			devArray_t<devArray_t<float*, 1>, 3> dst;
+			dst[0][0] = (grid->f_g[0]);
+			dst[1][0] = (grid->u_g[0]);
+			dst[2][0] = (grid->r_g[0]);
 
-	//		make_kernel_param(&grid_size, &block_size, nv, 256);
-	//		fillTotalVertices_kernel_host_H << <grid_size, block_size >> > (nv, vflags, uchar, dst);
-	//		cudaDeviceSynchronize();
-	//		cuda_error_check;
-	//		// compute element energy and sum
-	//		make_kernel_param(&grid_size, &block_size, nv * 8, 256);
-	//		Sensitivity_kernel_opt_host_H << <grid_size, block_size >> > (nv, vflags, eflags,
-	//			dst,
-	//			rholist, dc, sens, volume, lexiOrder);
-	//		cudaDeviceSynchronize();
-	//		cuda_error_check;
-	//	}
-	//}
-	//cuda_error_check;
+			make_kernel_param(&grid_size, &block_size, nv, 256);
+			fillTotalVertices_kernel_host_H << <grid_size, block_size >> > (nv, vflags, uchar, dst);
+			cudaDeviceSynchronize();
+			cuda_error_check;
+			// compute element energy and sum
+			// sens needs a transfer block
+			auto tmpname = getMem().addBuffer(pow(MIN_TRANSFER, 3) * sizeof(VT));
+			tmp = getMem().getBuffer(tmpname)->data<VT>();
 
-	//cudaMemset(grid->u_g[0], 0, nv * sizeof(float));
-	//cudaMemset(grid->r_g[0], 0, nv * sizeof(float));
-	//cudaMemset(grid->f_g[0], 0, nv * sizeof(float));
-	//cudaDeviceSynchronize();
-	//cuda_error_check;
+			make_kernel_param(&grid_size, &block_size, nv * 8, 256);
+			Sensitivity_kernel_opt_host_H << <grid_size, block_size >> > (nv, vflags, eflags,
+				dst,
+				rholist, dc, tmp, volume, true);
+			offset = (bx + block_numx * by + block_numx * block_numy * bz) * pow(MIN_TRANSFER, 3);
+			cudaMemcpy(sens.data() + offset, tmp, pow(MIN_TRANSFER, 3) * sizeof(VT), cudaMemcpyDeviceToHost);
+			getMem().deleteBuffer(tmp);
+			cudaDeviceSynchronize();
+			cuda_error_check;
+		}
+	}
+	cuda_error_check;
+
+	cudaMemset(grid->u_g[0], 0, nv * sizeof(float));
+	cudaMemset(grid->r_g[0], 0, nv * sizeof(float));
+	cudaMemset(grid->f_g[0], 0, nv * sizeof(float));
+	cudaDeviceSynchronize();
+	cuda_error_check;
 }
 void homo::Homogenization_H::Sensitivity(float dC[3][3], float* sens, int pitchT, bool lexiOrder /*= false*/)
 {

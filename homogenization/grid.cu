@@ -84,9 +84,9 @@ __device__ void gsid2pos(int gsid, int color, int gsreso[3][8], int gsend[8], in
 }
 void homo::Grid_H::useGrid_g(void)
 {
-	cudaMemcpyToSymbol(gU_H, u_g, sizeof(gU_H));
-	cudaMemcpyToSymbol(gF_H, f_g, sizeof(gF_H));
-	cudaMemcpyToSymbol(gR_H, r_g, sizeof(gR_H));
+	cudaMemcpyToSymbol(gU_H, &u_g[0], sizeof(gU_H));
+	cudaMemcpyToSymbol(gF_H, &f_g[0], sizeof(gF_H));
+	cudaMemcpyToSymbol(gR_H, &r_g[0], sizeof(gR_H));
 	if (fine != nullptr) {
 		cudaMemcpyToSymbol(gUfine_H, fine->u_g, sizeof(gUfine_H));
 		cudaMemcpyToSymbol(gFfine_H, fine->f_g, sizeof(gFfine_H));
@@ -122,7 +122,16 @@ void homo::Grid_H::useGrid_g(void)
 		cudaMemcpyToSymbol(gGsCellReso, gsCellReso, sizeof(gGsCellReso));
 	}
 }
-
+void homo::Grid_H::useCurrent_g(void) {
+	cudaMemcpyToSymbolAsync(gU_H, &u_g[current], sizeof(gU_H), 0, cudaMemcpyDefault, stream[current]);
+	cudaMemcpyToSymbolAsync(gF_H, &f_g[current], sizeof(gF_H), 0, cudaMemcpyDefault, stream[current]);
+	cudaMemcpyToSymbolAsync(gR_H, &r_g[current], sizeof(gR_H), 0, cudaMemcpyDefault, stream[current]);
+}
+void homo::Grid_H::useNext_g(void) {
+	cudaMemcpyToSymbolAsync(gU_H, &u_g[next], sizeof(gU_H), 0, cudaMemcpyDefault, stream[next]);
+	cudaMemcpyToSymbolAsync(gF_H, &f_g[next], sizeof(gF_H), 0, cudaMemcpyDefault, stream[next]);
+	cudaMemcpyToSymbolAsync(gR_H, &r_g[next], sizeof(gR_H), 0, cudaMemcpyDefault, stream[next]);
+}
 __global__ void setVertexFlags_kernel(
 	int nv, VertexFlags* pflag,
 	devArray_t<int, 3> cellReso,
@@ -316,9 +325,8 @@ void homo::Grid_H::use_block_rho(int blockid) {
 	blocky = cellReso[1] / MIN_TRANSFER;
 	blockz = cellReso[2] / MIN_TRANSFER;
 
-	auto tmpname = getMem().addBuffer(pow(MIN_TRANSFER + 2, 3) * sizeof(VT));
-	VT* tmp = getMem().getBuffer(tmpname)->data<VT>();
-
+	VT* tmp;
+	tmp = getMem().getBuffer("temp_rho0")->data<VT>();
 	int bx = blockid % blockx;
 	int by = (blockid / blockx) % blocky;
 	int bz = blockid / (blockx * blocky);
@@ -326,11 +334,33 @@ void homo::Grid_H::use_block_rho(int blockid) {
 	int offset = (bx + blockx * by + blockx * blocky * bz) * pow(MIN_TRANSFER + 2, 3);
 	// set a temp rho for data
 	cudaMemcpy(tmp, rho_h->data() + offset, pow(MIN_TRANSFER + 2, 3) * sizeof(VT), cudaMemcpyHostToDevice);
-	update_host(tmp);
-	getMem().deleteBuffer(tmp);
 	cuda_error_check;
 }
+void homo::Grid_H::use_block_rhogs(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	blockz = cellReso[2] / MIN_TRANSFER;
 
+	VT* tmp = getMem().getBuffer(
+		(blockid == 0) ?
+		(current ? "temp_rho0" : "temp_rho1") :
+		(current ? "temp_rho1" : "temp_rho0")
+	)->data<VT>();
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+
+	int offset = (bx + blockx * by + blockx * blocky * bz) * pow(MIN_TRANSFER + 2, 3);
+	// set a temp rho for data
+	if (blockid == 0) {
+		cudaMemcpyAsync(tmp, rho_h->data() + offset, pow(MIN_TRANSFER + 2, 3) * sizeof(VT), cudaMemcpyHostToDevice, stream[current]);
+	}
+	else {
+		cudaMemcpyAsync(tmp, rho_h->data() + offset, pow(MIN_TRANSFER + 2, 3) * sizeof(VT), cudaMemcpyHostToDevice, stream[next]);
+	}
+	cuda_error_check;
+}
 void homo::Grid_H::use_block_u_g(int blockid) {
 	int blockx, blocky, blockz;
 	blockx = cellReso[0] / MIN_TRANSFER;
@@ -340,7 +370,21 @@ void homo::Grid_H::use_block_u_g(int blockid) {
 	int bz = blockid / (blockx * blocky);
 	int offset = (bx + blockx * by + blockx * blocky * bz) * n_gsvertices();
 	cudaMemcpy(u_g[0], u_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice);
-	cuda_error_check;
+}
+void homo::Grid_H::use_block_u_ggs(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	int offset = (bx + blockx * by + blockx * blocky * bz) * n_gsvertices();
+	if (blockid == 0) {
+		cudaMemcpyAsync(u_g[current], u_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice, stream[current]);
+	}
+	else {
+		cudaMemcpyAsync(u_g[next], u_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice, stream[next]);
+	}
 }
 
 void homo::Grid_H::write_block_u_g(int blockid) {
@@ -353,6 +397,16 @@ void homo::Grid_H::write_block_u_g(int blockid) {
 	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
 	cudaMemcpy(u_h.data() + offset, u_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
 }
+void homo::Grid_H::write_block_u_ggs(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
+	cudaMemcpyAsync(u_h.data() + offset, u_g[current], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost, stream[current]);
+}
 
 void homo::Grid_H::use_block_r_g(int blockid) {
 	int blockx, blocky, blockz;
@@ -363,7 +417,21 @@ void homo::Grid_H::use_block_r_g(int blockid) {
 	int bz = blockid / (blockx * blocky);
 	int offset = (bx + blockx * by + blockx * blocky * bz) * n_gsvertices();
 	cudaMemcpy(r_g[0], r_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice);
-	cuda_error_check;
+}
+void homo::Grid_H::use_block_r_ggs(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	int offset = (bx + blockx * by + blockx * blocky * bz) * n_gsvertices();
+	if (blockid == 0) {
+		cudaMemcpyAsync(r_g[current], r_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice, stream[current]);
+	}
+	else {
+		cudaMemcpyAsync(r_g[next], r_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice, stream[next]);
+	}
 }
 
 void homo::Grid_H::use_block_f_g(int blockid) {
@@ -377,7 +445,22 @@ void homo::Grid_H::use_block_f_g(int blockid) {
 	cudaMemcpy(f_g[0], f_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice);
 	cuda_error_check;
 }
-
+void homo::Grid_H::use_block_f_ggs(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	int offset = (bx + blockx * by + blockx * blocky * bz) * n_gsvertices();
+	if (blockid == 0) {
+		cudaMemcpyAsync(f_g[current], f_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice, stream[current]);
+	}
+	else {
+		cudaMemcpyAsync(f_g[next], f_h.data() + offset, n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice, stream[next]);
+	}
+	cuda_error_check;
+}
 
 void homo::Grid_H::write_block_f_g(int blockid) {
 	int blockx, blocky, blockz;
@@ -390,7 +473,17 @@ void homo::Grid_H::write_block_f_g(int blockid) {
 	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
 	cudaMemcpy(f_h.data() + offset, f_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
 }
+void homo::Grid_H::write_block_f_ggs(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
 
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
+	cudaMemcpyAsync(f_h.data() + offset, f_g[current], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost, stream[current]);
+}
 void homo::Grid_H::write_block_r_g(int blockid) {
 	int blockx, blocky, blockz;
 	blockx = cellReso[0] / MIN_TRANSFER;
@@ -402,7 +495,17 @@ void homo::Grid_H::write_block_r_g(int blockid) {
 	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
 	cudaMemcpy(r_h.data() + offset, r_g[0], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost);
 }
+void homo::Grid_H::write_block_r_ggs(int blockid) {
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
 
+	int bx = blockid % blockx;
+	int by = (blockid / blockx) % blocky;
+	int bz = blockid / (blockx * blocky);
+	size_t offset = (bx + by * blockx + bz * (blockx * blocky)) * n_gsvertices();
+	cudaMemcpyAsync(r_h.data() + offset, r_g[current], n_gsvertices() * sizeof(VT), cudaMemcpyDeviceToHost, stream[current]);
+}
 // map 32 vertices to 8 warp
 template<typename T, int BlockSize = 32 * 8>
 __global__ void gs_relaxation_otf_kernel_H(
@@ -672,12 +775,8 @@ __global__ void gs_relaxation_otf_kernel_host_H(
 
 		float u = { gU_H[0][vid] };
 
-		// relax
-#if !USING_SOR 
-		u = (gF_H[vid] - KeU) / Ks;
-#else
+
 		u = w * (gF_H[0][vid] - KeU) / Ks + (float(1) - w) * u;
-#endif
 
 		// if dirichlet boundary;
 		if (bx == 0 && by == 0 && bz == 0 && vflag.is_dirichlet_boundary()) {
@@ -1171,7 +1270,6 @@ void homo::Grid_H::gs_relaxation_host(int blockid, float w_SOR /*= 1.f*/, int ti
 	AbortErr();
 	// change to 8 bytes bank
 	use8Bytesbank();
-	useGrid_g();
 	devArray_t<int, 3>  gridCellReso{};
 	devArray_t<int, 8>  gsCellEnd{};
 	devArray_t<int, 8>  gsVertexEnd{};
@@ -1193,13 +1291,9 @@ void homo::Grid_H::gs_relaxation_host(int blockid, float w_SOR /*= 1.f*/, int ti
 			size_t grid_size, block_size;
 			int n_gs = gsVertexEnd[set_id] - (set_id == 0 ? 0 : gsVertexEnd[set_id - 1]);
 			make_kernel_param(&grid_size, &block_size, n_gs * 8, 32 * 8);
-			gs_relaxation_otf_kernel_host_H << <grid_size, block_size >> > (set_id, rho_g, gridCellReso, vertflag, cellflag, bx, by, bz, w_SOR, diag_strength);
-			cudaDeviceSynchronize();
-			cuda_error_check;
+			gs_relaxation_otf_kernel_host_H << <grid_size, block_size, 0, stream[current]>> > (set_id, rho_g, gridCellReso, vertflag, cellflag, bx, by, bz, w_SOR, diag_strength);
 		}
 	}
-	cudaDeviceSynchronize();
-	cuda_error_check;
 }
 
 
@@ -1224,7 +1318,6 @@ void homo::Grid_H::prolongate_correction(void)
 
 void homo::Grid_H::prolongate_correction(int blockid)
 {
-	useGrid_g();
 	VertexFlags* vflags = vertflag;
 	VertexFlags* vcoarseFlags = Coarse->vertflag;
 	devArray_t<int, 8> gsVertexEnd{}, gsCoarseVertexEnd{};
@@ -1275,7 +1368,6 @@ void homo::Grid_H::restrict_residual(void)
 
 void homo::Grid_H::restrict_residual(int blockid)
 {
-	useGrid_g();
 	VertexFlags* vflags = vertflag;
 	VertexFlags* vfineflags = fine->vertflag;
 	devArray_t<int, 8> gsVertexEnd{}, gsFineVertexEnd{};
@@ -1297,14 +1389,6 @@ void homo::Grid_H::restrict_residual(int blockid)
 	restrict_residual_kernel_host_H << <grid_size, block_size >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd, bx, by, bz);
 	cudaDeviceSynchronize();
 	cuda_error_check;
-
-	std::vector<float> transfer(n_gsvertices());
-	cudaMemcpy(transfer.data(), f_g[0], n_gsvertices() * sizeof(float), cudaMemcpyDeviceToHost);
-	//std::ofstream fout("fg host.txt");
-	//for (const auto& x : transfer) {
-	//	fout << x << " ";
-	//}
-	//fout.close();
 	pad_vertex_data(f_g);
 }
 
@@ -1647,7 +1731,6 @@ void homo::Grid_H::update_residual(void)
 
 void homo::Grid_H::update_residual_host(int blockid)
 {
-	useGrid_g();
 	devArray_t<int, 3> gridCellReso{ MIN_TRANSFER, MIN_TRANSFER, MIN_TRANSFER };
 	VertexFlags* vflags = vertflag;
 	CellFlags* eflags = cellflag;
@@ -1660,10 +1743,8 @@ void homo::Grid_H::update_residual_host(int blockid)
 	int bz = blockid / (blockx * blocky);
 	size_t grid_size, block_size;
 	make_kernel_param(&grid_size, &block_size, n_gsvertices() * 8, 32 * 8);
-	update_residual_otf_kernel_1_host_H << <grid_size, block_size >> > (n_gsvertices(), rho_g, gridCellReso,
+	update_residual_otf_kernel_1_host_H << <grid_size, block_size, 0, stream[current] >> > (n_gsvertices(), rho_g, gridCellReso,
 		vflags, eflags, diag_strength, bx, by, bz);
-	cudaDeviceSynchronize();
-	cuda_error_check;
 }
 
 __device__ int gsPos2Id(int pos[3], int* gsEnd, int(*gsReso)[8]) {
@@ -1736,6 +1817,8 @@ void homo::Grid_H::enforce_unit_macro_strain_host(int istrain)
 	blockz = cellReso[2] / MIN_TRANSFER;
 	for (int i = 0; i < blockx * blocky * blockz; i++) {
 		use_block_rho(i);
+		float* tmp = getMem().getBuffer("temp_rho0")->data<float>();
+		update_host(tmp);
 		cuda_error_check;
 		// give in the right rho_g
 		devArray_t<VT*, 1> fcharlist{ f_g[0] };
@@ -1813,9 +1896,9 @@ void homo::Grid_H::restrict_stencil(void)
 		}
 		cudaDeviceSynchronize();
 		cuda_error_check;
-		int ne = fine->cellReso[0] * fine->cellReso[1] * fine->cellReso[2];
-		make_kernel_param(&grid_size, &block_size, ne, 256);
-		restrict_stencil_otf_aos_kernel_alter_H << <grid_size, block_size >> > (ne, fine->rho_g, fine->cellflag, fine->vertflag);
+		int nv = (cellReso[0] + 1) * (cellReso[1]+1) * (cellReso[2]+1);
+		make_kernel_param(&grid_size, &block_size, nv, 256);
+		restrict_stencil_otf_aos_kernel_1_H << <grid_size, block_size >> > (nv, fine->rho_g, cellflag, vertflag);
 		cudaDeviceSynchronize();
 		cuda_error_check;
 		useGrid_g();
@@ -1839,7 +1922,10 @@ void homo::Grid_H::restrict_stencil(void)
 		blocky = fine->cellReso[1] / MIN_TRANSFER;
 		blockz = fine->cellReso[2] / MIN_TRANSFER;
 		for (int i = 0; i < blockx * blocky * blockz; i++) {
+			fine->useGrid_g();
 			fine->use_block_rho(i);
+			float* tmp = getMem().getBuffer("temp_rho0")->data<VT>();
+			fine->update_host(tmp);
 			cuda_error_check;
 			useGrid_g();
 			int bx = i % blockx;
@@ -3138,14 +3224,20 @@ void homo::Grid_H::update(float* rho, int pitchT, bool lexiOrder) {
 	}
 }
 void homo::Grid_H::update_host(float* rho) {
-	useGrid_g();
 	size_t grid_size, block_size;
 	int ne = pow(MIN_TRANSFER+2, 3);
 	auto vflags = vertflag;
 	auto eflags = cellflag;
 	make_kernel_param(&grid_size, &block_size, ne, 256);
-	update_rho_host_kernel << <grid_size, block_size >> > (ne, vflags, eflags, rho, rho_g);
+	update_rho_host_kernel << <grid_size, block_size>> > (ne, vflags, eflags, rho, rho_g);
 	cudaDeviceSynchronize();
 	cuda_error_check;
 }
-
+void homo::Grid_H::update_hostgs(float* rho) {
+	size_t grid_size, block_size;
+	int ne = pow(MIN_TRANSFER + 2, 3);
+	auto vflags = vertflag;
+	auto eflags = cellflag;
+	make_kernel_param(&grid_size, &block_size, ne, 256);
+	update_rho_host_kernel << <grid_size, block_size, 0, stream[current] >> > (ne, vflags, eflags, rho, rho_g);
+}
