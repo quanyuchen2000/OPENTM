@@ -59,7 +59,7 @@ struct FlagBase {
 	__host_device_func bool is_max_boundary(void) { return flagbits & MAX_BOUNDARY_MASK; }
 	__host_device_func void set_boundary(FlagBit boundaryFlag) { flagbits |= boundaryFlag; }
 
-	__host_device_func bool is_fiction(void) { return flagbits & FlagBit::FICTION_FLAG; }
+	__host_device_func const bool is_fiction(void) { return flagbits & FlagBit::FICTION_FLAG; }
 
 	__host_device_func void set_fiction(void) { flagbits |= FICTION_FLAG; }
 
@@ -116,8 +116,7 @@ struct Grid_H {
 	int current = 0;
 	int next = 1;
 	std::vector<cudaStream_t> stream;
-	std::vector<cudaEvent_t> ready_event;
-	std::vector<cudaEvent_t> cal_event;
+	cudaEvent_t ready_event;
 
 	// coarse from finer grid
 	std::array<int, 3> upCoarse = {};
@@ -262,9 +261,9 @@ struct Grid_H {
 	void use_block_u_ggs(int blockid);
 	void use_block_r_ggs(int blockid);
 	void use_block_f_ggs(int blockid);
-	void write_block_u_ggs(int blockid);
-	void write_block_f_ggs(int blockid);
-	void write_block_r_ggs(int blockid);
+	void write_block_u_ggs(int blockid, bool iscurrent = true);
+	void write_block_f_ggs(int blockid, bool iscurrent = true);
+	void write_block_r_ggs(int blockid, bool iscurrent = true);
 
 	float diagPrecondition(float strength);
 

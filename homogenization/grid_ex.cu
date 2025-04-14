@@ -53,7 +53,6 @@ __global__ void restrict_stencil_otf_aos_kernel_1_H(
 	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
 
 	if (debug) { printf("vipos = (%d, %d, %d)\n", vipos[0], vipos[1], vipos[2]); }
-
 	for (int vj = 0; vj < 27; vj++) {
 		int coarse_vj_off[3] = {
 			coarseRatio[0] * (vj % 3 - 1),
@@ -256,21 +255,21 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 	bool debug = false;
 
 	if (rhoid >= ne) return;
-	if (tid == 0) {
-		printf("head at:(%d, %d, %d)", rhopos[0], rhopos[1], rhopos[2]);
-	}
+
 	// first we get the rho value
 	int eidpos[3] = { tid % MIN_TRANSFER, tid / MIN_TRANSFER % MIN_TRANSFER, tid / (MIN_TRANSFER * MIN_TRANSFER) };
 	int eid = lexi2gs(eidpos, gsFineCellReso, gsFineCellEnd);
-	float rho_penal = powf(float(rholist[eid]), exp_penal[0]);
+	float rho_penal = rholist[eid];
 
 	// rhopos on fine while rhoposc on coarse
 	int rhoposc[3] = { rhopos[0] / coarseRatio[0], rhopos[1] / coarseRatio[1], rhopos[2] / coarseRatio[2] };
 
-	float pr = coarseRatio[0] * coarseRatio[1] * coarseRatio[2];
+	float inv_pr = 1.0 / (coarseRatio[0] * coarseRatio[1] * coarseRatio[2]);
 
 	// vi is for the center vertex and vj for stencil node
+#pragma unroll
 	for (int vi = 0; vi < 8; vi++) {
+#pragma unroll
 		for (int vj = 0; vj < 8; vj++) {
 			int vipos[3] = { rhoposc[0] + vi % 2, rhoposc[1] + vi / 2 % 2, rhoposc[2] + vi / 4 };
 			int vid = vipos[0] + vipos[1] * (coarseReso[0] + 1) + vipos[2] * (coarseReso[0] + 1) * (coarseReso[1] + 1);
@@ -278,7 +277,7 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 			int stencil_id = (vjpos[0] - vipos[0] + 1) + (vjpos[1] - vipos[1] + 1) * 3 + (vjpos[2] - vipos[2] + 1) * 9;
 			// caculate st
 			float st = 0.0;
-
+#pragma unroll
 			for (int e_vi = 0; e_vi < 8; e_vi++) {
 				int e_vi_fine_off[3] = {
 					rhopos[0] + e_vi % 2 - vipos[0] * coarseRatio[0],
@@ -287,23 +286,19 @@ __global__ void restrict_stencil_otf_aos_kernel_host_H(
 				};
 				float wi = (coarseRatio[0] - abs(e_vi_fine_off[0])) *
 					(coarseRatio[1] - abs(e_vi_fine_off[1])) *
-					(coarseRatio[2] - abs(e_vi_fine_off[2])) / pr;
+					(coarseRatio[2] - abs(e_vi_fine_off[2])) * inv_pr;
 				if (debug) printf("   e_vi_off = (%d, %d, %d), wi = %f\n", e_vi_fine_off[0], e_vi_fine_off[1], e_vi_fine_off[2], wi);
 				wi *= rho_penal;
+#pragma unroll
 				for (int e_vj = 0; e_vj < 8; e_vj++) {
 					int vij_off[3] = {
 						abs(rhopos[0] + e_vj % 2 - vjpos[0] * coarseRatio[0]),
 						abs(rhopos[1] + e_vj / 2 % 2 - vjpos[1] * coarseRatio[1]),
 						abs(rhopos[2] + e_vj / 4 - vjpos[2] * coarseRatio[2])
 					};
-					if (vij_off[0] > coarseRatio[0] || vij_off[1] > coarseRatio[1] ||
-						vij_off[2] > coarseRatio[2]) {
-						printf("vij_off[0] is %d", vij_off[0]);
-						printf("shouldn't go here");
-					}
 					float wj = (coarseRatio[0] - vij_off[0]) *
 						(coarseRatio[1] - vij_off[1]) *
-						(coarseRatio[2] - vij_off[2]) / pr;
+						(coarseRatio[2] - vij_off[2]) * inv_pr;
 					if (debug) printf("    vij_off = (%d, %d, %d), wi = %f\n", vij_off[0], vij_off[1], vij_off[2], wj);
 					st += (wi * wj) * KE[e_vi][e_vj];
 				}

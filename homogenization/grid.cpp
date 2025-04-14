@@ -326,12 +326,7 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 		stream.resize(2);
 		cudaStreamCreate(&stream[0]);
 		cudaStreamCreate(&stream[1]);
-		ready_event.resize(2);
-		cudaEventCreate(&ready_event[0]);
-		cudaEventCreate(&ready_event[1]);
-		cal_event.resize(2);
-		cudaEventCreate(&cal_event[0]);
-		cudaEventCreate(&cal_event[1]);
+		cudaEventCreate(&ready_event);
 	}
 	printf("%s allocated %zd MB GPU memory, %zd MB CPU memory\n", getName().c_str(), total_gpu / 1024 / 1024, total_cpu / 1024 / 1024);
 	return total_gpu;
@@ -710,11 +705,12 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 					(bid / block_numx) % block_numy,
 					bid / (block_numx * block_numy)
 				};
+				const int ngsv = n_gsvertices();
 				for (int i = 1; i < MIN_TRANSFER + 2; i++) {
 					for (int j = 1; j < MIN_TRANSFER + 2; j++) {
 						{
 							int pos[3] = { MIN_TRANSFER + 1, i, j };
-							const int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							auto new_offset = offset;
 							new_offset[0] = (new_offset[0] + 1) % block_numx;
 							pos[0] = 1;
@@ -727,12 +723,12 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 								new_offset[2] = (new_offset[2] + 1) % block_numz;
 							}
 							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
-							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							v[gsid_tar] = v[gsid_src];
 						}
 						{
 							int pos[3] = { i, MIN_TRANSFER + 1, j };
-							const int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							auto new_offset = offset;
 							new_offset[1] = (new_offset[1] + 1) % block_numy;
 							pos[1] = 1;
@@ -745,12 +741,12 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 								new_offset[2] = (new_offset[2] + 1) % block_numz;
 							}
 							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
-							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							v[gsid_tar] = v[gsid_src];
 						}
 						{
 							int pos[3] = { i, j, MIN_TRANSFER + 1 };
-							const int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							auto new_offset = offset;
 							new_offset[2] = (new_offset[2] + 1) % block_numz;
 							pos[2] = 1;
@@ -763,7 +759,7 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 								new_offset[1] = (new_offset[1] + 1) % block_numy;
 							}
 							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
-							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							v[gsid_tar] = v[gsid_src];
 						}
 					}
@@ -773,7 +769,7 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 					for (int j = 0; j < MIN_TRANSFER + 3; j++) {
 						for (int k = 0; k < MIN_TRANSFER + 3; k++) {
 							int pos[3] = { i, j, k };
-							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							auto offsetx = offset;
 							offsetx[0] = (i == 0) ?
 								((offsetx[0] - 1 + block_numx) % block_numx) :
@@ -790,7 +786,7 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 								(k == MIN_TRANSFER + 2) ? (offsetx[2] + 1) % block_numz : offsetx[2];
 							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
 							int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
-							int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							v[gsid_tar] = v[gsid_src];
 						}
 					}
@@ -800,7 +796,7 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 					for (int i = 0; i < MIN_TRANSFER + 3; i++) {
 						for (int k = 0; k < MIN_TRANSFER + 3; k++) {
 							int pos[3] = { i, j, k };
-							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							auto offsety = offset;
 
 							offsety[1] = (j == 0) ?
@@ -819,7 +815,7 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
 
 							const int src_bid = offsety[0] + offsety[1] * block_numx + offsety[2] * (block_numx * block_numy);
-							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							v[gsid_tar] = v[gsid_src];
 						}
 					}
@@ -829,7 +825,7 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 					for (int i = 0; i < MIN_TRANSFER + 3; i++) {
 						for (int j = 0; j < MIN_TRANSFER + 3; j++) {
 							int pos[3] = { i, j, k };
-							int gsid_tar = bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							auto offsetz = offset;
 
 							offsetz[2] = (k == 0) ?
@@ -848,7 +844,7 @@ void homo::Grid_H::enforce_vertex_boundary(std::vector<VT>& v) {
 							pos[1] = (j == 0) ? MIN_TRANSFER : (j == MIN_TRANSFER + 2) ? 2 : j;
 
 							const int src_bid = offsetz[0] + offsetz[1] * block_numx + offsetz[2] * (block_numx * block_numy);
-							const int gsid_src = src_bid * n_gsvertices() + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
 							v[gsid_tar] = v[gsid_src];
 						}
 					}

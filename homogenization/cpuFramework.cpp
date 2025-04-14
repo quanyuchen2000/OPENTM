@@ -193,96 +193,7 @@ void caculate_sens(std::vector<float>& rhosens, std::vector<float>& rhopsens, st
 	for (int i = 0; i < rhosens.size(); i++) {
 		rhosens[i] = rhopsens[i] * (3 * rho[i] * rho[i]) * (config.heatRatio[0] - config.heatRatio[1]);
 	}
-	//for (int k = 0; k < srcAcc.dim[2]; k++) {
-	//	for (int j = 0; j < srcAcc.dim[1]; j++) {
-	//		for (int i = 0; i < srcAcc.dim[0]; i++) {
-	//			Scalar sum(0);
-	//			for (int neighid = 0; neighid < ker.size(); neighid++) {
-	//				int off[3];
-	//				ker.neigh(neighid, off);
-	//				off[0] = i - off[0]; off[1] = j - off[1]; off[2] = k - off[2];
-	//				Scalar w = ker.weight(neighid);
-	//				typename decltype(dstAcc)::Scalar val{ 0 };
-	//				if (off[0] >= 0 && off[0] < dstAcc.dim[0] &&
-	//					off[1] >= 0 && off[1] < dstAcc.dim[1] &&
-	//					off[2] >= 0 && off[2] < dstAcc.dim[2]) {
-	//					val = dstAcc(off[0], off[1], off[2]);
-	//				}
-	//				sum += w * val;
-	//			}
-	//			srcAcc(i, j, k) = sum;
-	//		}
-	//	}
-	//}
 }
-//void update_density_boundary(std::vector<float>& rho, cfg::HomoConfig config) {
-//	int resox = config.reso[0];
-//	int resoy = config.reso[1];
-//	int resoz = config.reso[2];
-//	int off_set = 0;
-//	// for each block init block
-//	int block_numx = (resox / MIN_TRANSFER);
-//	int block_numy = (resoy / MIN_TRANSFER);
-//	int block_numz = (resoz / MIN_TRANSFER);
-//
-//	int block_num = block_numx * block_numy * block_numz;
-//	int block_len = pow(MIN_TRANSFER + 2, 3);
-//	for (int block_id = 0; block_id < block_num; block_id++) {
-//		off_set = block_len * block_id;
-//		int off_setx = block_id % block_numx, off_sety = block_id / block_numx % block_numy, off_setz = block_id / (block_numx * block_numy);
-//		// k = 0
-//		int tox, toy, toz;
-//		int ti, tj, tk;
-//		for (int k = 0; k < MIN_TRANSFER + 2; k++) {
-//			for (int j = 0; j < MIN_TRANSFER + 2; j++) {
-//				for (int i = 0; i < MIN_TRANSFER + 2; i++) {
-//					if (!(i == 0 || i == MIN_TRANSFER + 1 || j == 0 || j == MIN_TRANSFER + 1 || k == 0 || k == MIN_TRANSFER + 1)) {
-//						continue;
-//					}
-//					if (i == 0) {
-//						tox = (off_setx - 1 + block_numx) % block_numx;
-//						ti = MIN_TRANSFER;
-//					}
-//					else if (i == MIN_TRANSFER + 1) {
-//						tox = (off_setx + 1 + block_numx) % block_numx;
-//						ti = 1;
-//					}
-//					else {
-//						tox = off_setx;
-//						ti = i;
-//					}
-//					if (j == 0) {
-//						toy = (off_sety - 1 + block_numy) % block_numy;
-//						tj = MIN_TRANSFER;
-//					}
-//					else if (j == MIN_TRANSFER + 1) {
-//						toy = (off_sety + 1 + block_numy) % block_numy;
-//						tj = 1;
-//					}
-//					else {
-//						toy = off_sety;
-//						tj = j;
-//					}
-//					if (k == 0) {
-//						toz = (off_setz - 1 + block_numz) % block_numz;
-//						tk = MIN_TRANSFER;
-//					}
-//					else if (k == MIN_TRANSFER + 1) {
-//						toz = (off_setz + 1 + block_numz) % block_numz;
-//						tk = 1;
-//					}
-//					else {
-//						toz = off_setz;
-//						tk = k;
-//					}
-//					int id = off_set + k * (MIN_TRANSFER + 2) * (MIN_TRANSFER + 2) + j * (MIN_TRANSFER + 2) + i;
-//					int tid = (tox + toy * block_numx + toz * block_numx * block_numy) * block_len + tk * (MIN_TRANSFER + 2) * (MIN_TRANSFER + 2) + tj * (MIN_TRANSFER + 2) + ti;
-//					rho[id] = rho[tid];
-//				}
-//			}
-//		}
-//	}
-//}
 
 void update_density_boundary(std::vector<float>& rho, cfg::HomoConfig config) {
 	const int resox = config.reso[0];
@@ -491,4 +402,16 @@ void lexi2block(std::vector<float>& lexirho, std::vector<float>& rho, cfg::HomoC
 			}
 		}
 	}
+}
+float find_max_abs(const std::vector<float>& sens) {
+	if (sens.empty()) {
+		throw std::invalid_argument("Vector is empty");
+	}
+	auto it = std::max_element(
+		sens.begin(), sens.end(),
+		[](float a, float b) {
+			return std::abs(a) < std::abs(b);
+		}
+	);
+	return *it;
 }

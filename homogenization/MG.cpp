@@ -72,46 +72,18 @@ void homo::MG_H::Grid0(int block_num) {
 	}
 }
 void homo::MG_H::gsGrid0(int block_num) {
-	/*for (int i = 0; i < block_num; i += 2) {
-		grids[0]->use_block_rhogs(i);
-		grids[0]->use_block_rhogs(i+1);
-		grids[0]->use_block_u_ggs(i);
-		grids[0]->use_block_u_ggs(i+1);
-		grids[0]->use_block_f_ggs(i);
-		grids[0]->use_block_f_ggs(i+1);
-
-		float* tmp;
-		tmp = getMem().getBuffer("temp_rho1")->data<float>();
-		grids[0]->useCurrent_g(i);
-		grids[0]->update_hostgs(tmp, i);
-		grids[0]->gs_relaxation_host(i);
-
-		tmp = getMem().getBuffer("temp_rho0")->data<float>();
-		grids[0]->useCurrent_g(i + 1);
-		grids[0]->update_hostgs(tmp, i+1);
-		grids[0]->gs_relaxation_host(i+1);
-
-		grids[0]->write_block_u_ggs(i);
-		grids[0]->write_block_u_ggs(i+1);
-	}*/
 	grids[0]->use_block_rhogs(0);
 	grids[0]->use_block_u_ggs(0);
 	grids[0]->use_block_f_ggs(0);
-	grids[0]->useCurrent_g();
-	//cudaEventRecord(grids[0]->ready_event[grids[0]->current], grids[0]->stream[grids[0]->current]);
-
 	for (int i = 0; i < block_num - 1; i++) {
 		// give in rho_g u_g
 		cudaDeviceSynchronize();
-		// cudaStreamWaitEvent(grids[0]->stream[grids[0]->current], grids[0]->ready_event[grids[0]->current], 0);
+		if (i >= 1) {
+			grids[0]->write_block_u_ggs(i - 1);
+		}
 		grids[0]->use_block_rhogs(i + 1);
 		grids[0]->use_block_u_ggs(i + 1);
 		grids[0]->use_block_f_ggs(i + 1);
-		// cudaEventRecord(grids[0]->ready_event[grids[0]->next], grids[0]->stream[grids[0]->next]);
-		if (i >= 1) {
-			//cudaStreamWaitEvent(grids[0]->stream[grids[0]->current], grids[0]->cal_event[grids[0]->next], 0);
-			grids[0]->useCurrent_g();
-		}
 		float* tmp;
 		if (grids[0]->current) {
 			tmp = getMem().getBuffer("temp_rho0")->data<float>();
@@ -121,11 +93,11 @@ void homo::MG_H::gsGrid0(int block_num) {
 		}
 		grids[0]->update_hostgs(tmp);
 		grids[0]->gs_relaxation_host(i);
-		//cudaEventRecord(grids[0]->cal_event[grids[0]->current], grids[0]->stream[grids[0]->current]);
-		grids[0]->write_block_u_ggs(i);
 		std::swap(grids[0]->current, grids[0]->next);
 	}
 	cudaDeviceSynchronize();
+	grids[0]->write_block_u_ggs(block_num - 2);
+
 	float* tmp;
 	if (grids[0]->current) {
 		tmp = getMem().getBuffer("temp_rho0")->data<float>();
@@ -133,50 +105,24 @@ void homo::MG_H::gsGrid0(int block_num) {
 	else {
 		tmp = getMem().getBuffer("temp_rho1")->data<float>();
 	}
-	grids[0]->useCurrent_g();
 	grids[0]->update_hostgs(tmp);
 	grids[0]->gs_relaxation_host(block_num - 1);
-	grids[0]->write_block_u_ggs(block_num - 1);
+	grids[0]->write_block_u_ggs(block_num - 1, false);
 	cudaDeviceSynchronize();
+	// caculate time and make full use of CPU
 	grids[0]->enforce_vertex_boundary(grids[0]->u_h);
-	/*grids[0]->enforce_vertex_boundary(grids[0]->u_h);
-	for (int i = 0; i < block_num; i+=2) {
-		grids[0]->use_block_rhogs(i);
-		grids[0]->use_block_rhogs(i+1);
-		grids[0]->use_block_u_ggs(i);
-		grids[0]->use_block_u_ggs(i+1);
-		grids[0]->use_block_f_ggs(i);
-		grids[0]->use_block_f_ggs(i+1);
-		float* tmp;
-		tmp = getMem().getBuffer("temp_rho1")->data<float>();
-		grids[0]->useCurrent_g(i);
-		grids[0]->update_hostgs(tmp, i);
-		grids[0]->update_residual_host(i);
-
-		tmp = getMem().getBuffer("temp_rho0")->data<float>();
-		grids[0]->useCurrent_g(i+1);
-		grids[0]->update_hostgs(tmp, i+1);
-		grids[0]->update_residual_host(i+1);
-
-		grids[0]->write_block_r_ggs(i);
-		grids[0]->write_block_r_ggs(i+1);
-	}*/
-
 
 	grids[0]->use_block_rhogs(0);
 	grids[0]->use_block_u_ggs(0);
 	grids[0]->use_block_f_ggs(0);
-	grids[0]->useCurrent_g();
 	for (int i = 0; i < block_num - 1; i++) {
 		cudaDeviceSynchronize();
+		if (i >= 1) {
+			grids[0]->write_block_r_ggs(i - 1);
+		}
 		grids[0]->use_block_rhogs(i + 1);
 		grids[0]->use_block_u_ggs(i + 1);
 		grids[0]->use_block_f_ggs(i + 1);
-		// cudaEventRecord(grids[0]->ready_event[grids[0]->next], grids[0]->stream[grids[0]->next]);
-		if (i >= 1) {
-			// cudaStreamWaitEvent(grids[0]->stream[grids[0]->current], grids[0]->cal_event[grids[0]->next], 0);
-			grids[0]->useCurrent_g();
-		}
 		float* tmp;
 		if (grids[0]->current) {
 			tmp = getMem().getBuffer("temp_rho0")->data<float>();
@@ -186,21 +132,19 @@ void homo::MG_H::gsGrid0(int block_num) {
 		}
 		grids[0]->update_hostgs(tmp);
 		grids[0]->update_residual_host(i);
-		// cudaEventRecord(grids[0]->cal_event[grids[0]->current], grids[0]->stream[grids[0]->current]);
-		grids[0]->write_block_r_ggs(i);
 		std::swap(grids[0]->current, grids[0]->next);
 	}
 	cudaDeviceSynchronize();
+	grids[0]->write_block_r_ggs(block_num - 2);
 	if (grids[0]->current) {
 		tmp = getMem().getBuffer("temp_rho0")->data<float>();
 	}
 	else {
 		tmp = getMem().getBuffer("temp_rho1")->data<float>();
 	}
-	grids[0]->useCurrent_g();
 	grids[0]->update_hostgs(tmp);
 	grids[0]->update_residual_host(block_num - 1);
-	grids[0]->write_block_r_ggs(block_num - 1);
+	grids[0]->write_block_r_ggs(block_num - 1, false);
 	cudaDeviceSynchronize();
 }
 void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*/)
@@ -230,10 +174,13 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		printf("residual is:%lf\n", res);
 		grids[1]->reset_force();
 		grids[1]->useGrid_g();
+
+
 		for (int i = 0; i < block_num; i++) {
 			grids[0]->use_block_r_g(i);
 			grids[1]->restrict_residual(i);
 		}
+		grids[1]->pad_vertex_data(grids[1]->f_g);
 		grids[1]->reset_displacement();
 	}
 	grids[1]->gs_relaxation(w_SOR);

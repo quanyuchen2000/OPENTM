@@ -359,12 +359,16 @@ void homo::Homogenization_H::heatMatrix(double C[3][3]) {
 				C[i][j] = 0;
 			}
 		}
+
 		for (int blockid = 0; blockid < block_num; blockid++) {
-			int bx = blockid % block_numx;
-			int by = (blockid / block_numx) % block_numy;
-			int bz = blockid / (block_numx * block_numy);
-			int offset = (bx + block_numx * by + block_numx * block_numy * bz) * grid->n_gsvertices();
-			// give in rho_g
+		int bx = blockid % block_numx;
+		int by = (blockid / block_numx) % block_numy;
+		int bz = blockid / (block_numx * block_numy);
+		int offset = (bx + block_numx * by + block_numx * block_numy * bz) * grid->n_gsvertices();
+		VertexFlags* vflags = grid->vertflag;
+		CellFlags* eflags = grid->cellflag;
+		int nv = grid->n_gsvertices();
+		size_t grid_size, block_size;
 			grid->use_block_rho(blockid);
 			float* tmp = getMem().getBuffer("temp_rho0")->data<float>();
 			grid->update_host(tmp);
@@ -374,10 +378,6 @@ void homo::Homogenization_H::heatMatrix(double C[3][3]) {
 				cudaMemcpy(grid->uchar_h[i], grid->uchar[i].data() + offset, grid->n_gsvertices() * sizeof(VT), cudaMemcpyHostToDevice);
 				ucharlist[i][0] = grid->uchar_h[i];
 			}
-			VertexFlags* vflags = grid->vertflag;
-			CellFlags* eflags = grid->cellflag;
-			int nv = grid->n_gsvertices();
-			size_t grid_size, block_size;
 			// prefecth unified memory data to device memory
 			devArray_t<devArray_t<float*, 1>, 3> dst;
 			dst[0][0] = (grid->f_g[0]);
@@ -839,18 +839,13 @@ void homo::Homogenization_H::Sensitivity_host(float dC[3][3], std::vector<float>
 			fillTotalVertices_kernel_host_H << <grid_size, block_size >> > (nv, vflags, uchar, dst);
 			cudaDeviceSynchronize();
 			cuda_error_check;
-			// compute element energy and sum
-			// sens needs a transfer block
-			auto tmpname = getMem().addBuffer(pow(MIN_TRANSFER, 3) * sizeof(VT));
-			tmp = getMem().getBuffer(tmpname)->data<VT>();
-
+			tmp = getMem().getBuffer("temp_rho0")->data<VT>();
 			make_kernel_param(&grid_size, &block_size, nv * 8, 256);
 			Sensitivity_kernel_opt_host_H << <grid_size, block_size >> > (nv, vflags, eflags,
 				dst,
 				rholist, dc, tmp, volume, true);
 			offset = (bx + block_numx * by + block_numx * block_numy * bz) * pow(MIN_TRANSFER, 3);
 			cudaMemcpy(sens.data() + offset, tmp, pow(MIN_TRANSFER, 3) * sizeof(VT), cudaMemcpyDeviceToHost);
-			getMem().deleteBuffer(tmp);
 			cudaDeviceSynchronize();
 			cuda_error_check;
 		}
