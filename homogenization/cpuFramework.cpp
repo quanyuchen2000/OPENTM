@@ -333,7 +333,7 @@ double norm_host(std::vector<float>& A) {
 		std::execution::par_unseq,
 		A.begin(), A.end(), 
 		0.0,  
-		std::plus<float>(),
+		std::plus<double>(),
 		[](float x) { return static_cast<double>(x) * x; }
 	);
 	return std::sqrt(sum);

@@ -184,7 +184,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 
 		{
 			ConvergeChecker criteria(config.finthres);
-			OCOptimizer oc(MIN_TRANSFER* MIN_TRANSFER* MIN_TRANSFER, 0.001, 0.02, 0.5);
+			OCOptimizer oc(MIN_TRANSFER*MIN_TRANSFER*MIN_TRANSFER, 0.001, 0.02, 0.5);
 
 			VolumeGovernor governor;
 			float final_val;
@@ -249,6 +249,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				float minSens = 0;
 				for (int itn = 0; itn < 20; itn++) {
 					float gSens = (maxSens + minSens) / 2;
+
 					std::for_each(std::execution::par_unseq, newrho.begin(), newrho.end(),
 						[&](auto& nr) {
 							int i = &nr - &newrho[0];
