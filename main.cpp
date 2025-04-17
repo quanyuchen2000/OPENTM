@@ -1,5 +1,8 @@
 ﻿#include <iostream>
 #include "cmdline.h"
+#ifndef _USE_MATH_DEFINES
+#define _USE_MATH_DEFINES
+#endif
 #include "openvdb/tools/VolumeToMesh.h"
 #include "voxelIO/openvdb_wrapper_t.h"
 #include <fstream>
@@ -159,7 +162,7 @@ int main()
 	//	std::cout << "\033[31m" << "Unhandled Exception occurred, aborting..." << "\033[0m" << std::endl;
 	//	exit(-1);
 	//}
-	runInstance(512, { 400, 0.17 }, {120,80,40,40,20,20}, cfg::InitWay::IWP, cfg::Model::oc);
+	runInstance(256, { 400, 0.17 }, {120,80,40,40,20,20}, cfg::InitWay::IWP, cfg::Model::oc);
 	// runbatch();
 	return 0;
 }

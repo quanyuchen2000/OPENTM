@@ -12,12 +12,13 @@
 #include <numeric>
 #include <iostream>
 #include <stdint.h>
+#include <thread>
 #include "gmem/DeviceBuffer.h" 
 #include <Eigen/Sparse>
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 256
+#define MIN_TRANSFER 128
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
 	using hvec3 = vec<3, half>;
@@ -110,6 +111,14 @@ struct Grid_H {
 	bool is_root = false;
 
 	bool assemb_otf = false;
+	// help parameters for multi thread
+	std::atomic<int> next_bid;
+	const unsigned num_threads = std::thread::hardware_concurrency();
+	int task_num = 9;
+	int block_numx = 2;
+	int block_numy = 2;
+	int block_numz = 2;
+	int bid;
 
 	bool use_host_memory = false;
 
@@ -372,7 +381,8 @@ struct Grid_H {
 	void enforce_period_vertex(half* v[1], bool additive = false);
 	void enforce_period_vertex(float* v[1], bool additive = false);
 	void enforce_vertex_boundary(std::vector<VT>& v);
-
+	void enforce_vertex_boundary_block(std::vector<VT>& v, int blockid, std::vector<std::thread> &workers);
+	void join_workers();
 	void pad_vertex_data(float* v[1]);
 	void pad_vertex_data(half* v[1]);
 	void pad_vertex_data_host(std::vector<float>& v);

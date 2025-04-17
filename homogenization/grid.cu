@@ -963,7 +963,7 @@ __global__ void restrict_residual_kernel_host_H(
 	VertexFlags* vfineflags,
 	devArray_t<int, 8> GsVertexEnd,
 	devArray_t<int, 8> GsFineVertexEnd,
-	int bx, int by, int bz
+	int bx, int by, int bz, float* fineR
 ) {
 	__shared__ int gsVertexEnd[8];
 	__shared__ int gsFineVertexEnd[8];
@@ -1005,51 +1005,99 @@ __global__ void restrict_residual_kernel_host_H(
 	if (pos.z == 0 || pos.z == MIN_TRANSFER) { ratio *= 0.5; }
 
 	if (!fiction && !vflag.is_period_padding()) {
-		for (int offx = -coarseRatio[0] + 1; offx < coarseRatio[0]; offx++) {
-			for (int offy = -coarseRatio[1] + 1; offy < coarseRatio[1]; offy++) {
-				for (int offz = -coarseRatio[2] + 1; offz < coarseRatio[2]; offz++) {
-					// for reso == 32 pos is from 1 to 33
-					int off_pos[3] = { pos.x + offx, pos.y + offy, pos.z + offz };
-					// check if off_pos reffer to a coarse vertex
-					// if no referred skip
-					if (off_pos[0] % coarseRatio[0] == 0 && off_pos[1] % coarseRatio[1] == 0 && off_pos[2] % coarseRatio[2] == 0) {
-						// weight is still the same
-						float w = (coarseRatio[0] - abs(offx)) * (coarseRatio[1] - abs(offy)) * (coarseRatio[2] - abs(offz)) / pr;
-						// add to that gF_H
-						// coarse pos block:
-						int c_pos[3] = { off_pos[0] / coarseRatio[0], off_pos[1] / coarseRatio[1], off_pos[2] / coarseRatio[2] };
-						// true coarse pos by adding block
-						int c_true_pos[3];
-						for (int pos_idx = 0; pos_idx < 3; pos_idx++) {
-							c_true_pos[pos_idx] = (MIN_TRANSFER / coarseRatio[pos_idx]) * bid[pos_idx] + c_pos[pos_idx];
-						}
-						// printf("fine pos: (%d, %d, %d) coarse pos:(%d, %d, %d)\n",pos.x, pos.y, pos.z, c_true_pos[0], c_true_pos[1], c_true_pos[2]);
+		// we just judge how many upper vertex can it cover
+		// [xyz] [left,right]
+		int ppos[3] = { pos.x, pos.y, pos.z };
+		int contribute_vertex[3][2] = { { -1,-1},{ -1,-1},{ -1,-1} };
+#pragma unroll
+		for (int i = 0; i < 3; i++) {
+			int coarse_id = ppos[i] / coarseRatio[i];
+			contribute_vertex[i][0] = coarse_id * coarseRatio[i];
+			if (ppos[i] % coarseRatio[i] > 0) {
+				contribute_vertex[i][1] = (coarse_id+1) * coarseRatio[i];
+			}
+		}
+		for (int i = 0; i < 8; i++) {
+			int idx = i % 2;
+			int idy = i / 2 % 2;
+			int idz = i / 4;
+			if (contribute_vertex[0][idx] != -1 && contribute_vertex[1][idy] != -1 && contribute_vertex[2][idz] != -1) {
+				int off_pos[3] = { contribute_vertex[0][idx], contribute_vertex[1][idy], contribute_vertex[2][idz] };
+				float w = (coarseRatio[0] - abs(off_pos[0] - ppos[0])) * (coarseRatio[1] - abs(off_pos[1] - ppos[1])) * (coarseRatio[2] - abs(off_pos[2] - ppos[2])) / pr;
+				int c_pos[3] = { off_pos[0] / coarseRatio[0], off_pos[1] / coarseRatio[1], off_pos[2] / coarseRatio[2] };
+				int c_true_pos[3];
+#pragma unroll
+				for (int pos_idx = 0; pos_idx < 3; pos_idx++) {
+					c_true_pos[pos_idx] = (MIN_TRANSFER / coarseRatio[pos_idx]) * bid[pos_idx] + c_pos[pos_idx];
+				}
 
-						// if c_true_pos on the edges do to the opposite pos too
-						int xp[2] = {c_true_pos[0], -1};
-						int yp[2] = {c_true_pos[1], -1};
-						int zp[2] = {c_true_pos[2], -1};
-						if (xp[0] == 0) { xp[1] = gGridCellReso[0]; }
-						if (xp[0] == gGridCellReso[0]) { xp[1] = 0; }
-						if (yp[0] == 0) { yp[1] = gGridCellReso[1]; }
-						if (yp[0] == gGridCellReso[1]) { yp[1] = 0; }
-						if (zp[0] == 0) { zp[1] = gGridCellReso[2]; }
-						if (zp[0] == gGridCellReso[2]) { zp[1] = 0; }
-						for (int i = 0; i < 8; i++) {
-							int idx = i % 2;
-							int idy = i / 2 % 2;
-							int idz = i / 4;
-							int reflect[3];
-							if (xp[idx] != -1 && yp[idy] != -1 && zp[idz] != -1) {
-								reflect[0] = xp[idx]; reflect[1] = yp[idy]; reflect[2] = zp[idz];
-								int coarse_lexi = lexi2gs(reflect, gGsVertexReso, gGsVertexEnd);
-								atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w * ratio);
-							}
-						}
+				int xp[2] = { c_true_pos[0], -1 };
+				int yp[2] = { c_true_pos[1], -1 };
+				int zp[2] = { c_true_pos[2], -1 };
+				if (xp[0] == 0) { xp[1] = gGridCellReso[0]; }
+				if (xp[0] == gGridCellReso[0]) { xp[1] = 0; }
+				if (yp[0] == 0) { yp[1] = gGridCellReso[1]; }
+				if (yp[0] == gGridCellReso[1]) { yp[1] = 0; }
+				if (zp[0] == 0) { zp[1] = gGridCellReso[2]; }
+				if (zp[0] == gGridCellReso[2]) { zp[1] = 0; }
+#pragma unroll
+				for (int i = 0; i < 8; i++) {
+					int idx1 = i % 2;
+					int idy1 = i / 2 % 2;
+					int idz1 = i / 4;
+					int reflect[3];
+					if (xp[idx1] != -1 && yp[idy1] != -1 && zp[idz1] != -1) {
+						reflect[0] = xp[idx1]; reflect[1] = yp[idy1]; reflect[2] = zp[idz1];
+						int coarse_lexi = lexi2gs(reflect, gGsVertexReso, gGsVertexEnd);
+						atomicAdd(&gF_H[0][coarse_lexi], fineR[tid] * w * ratio);
 					}
 				}
 			}
 		}
+		//for (int offx = -coarseRatio[0] + 1; offx < coarseRatio[0]; offx++) {
+		//	for (int offy = -coarseRatio[1] + 1; offy < coarseRatio[1]; offy++) {
+		//		for (int offz = -coarseRatio[2] + 1; offz < coarseRatio[2]; offz++) {
+		//			// for reso == 32 pos is from 1 to 33
+		//			int off_pos[3] = { pos.x + offx, pos.y + offy, pos.z + offz };
+		//			// check if off_pos reffer to a coarse vertex
+		//			// if no referred skip
+		//			if (off_pos[0] % coarseRatio[0] == 0 && off_pos[1] % coarseRatio[1] == 0 && off_pos[2] % coarseRatio[2] == 0) {
+		//				// weight is still the same
+		//				float w = (coarseRatio[0] - abs(offx)) * (coarseRatio[1] - abs(offy)) * (coarseRatio[2] - abs(offz)) / pr;
+		//				// add to that gF_H
+		//				// coarse pos block:
+		//				int c_pos[3] = { off_pos[0] / coarseRatio[0], off_pos[1] / coarseRatio[1], off_pos[2] / coarseRatio[2] };
+		//				// true coarse pos by adding block
+		//				int c_true_pos[3];
+		//				for (int pos_idx = 0; pos_idx < 3; pos_idx++) {
+		//					c_true_pos[pos_idx] = (MIN_TRANSFER / coarseRatio[pos_idx]) * bid[pos_idx] + c_pos[pos_idx];
+		//				}
+		//				// printf("fine pos: (%d, %d, %d) coarse pos:(%d, %d, %d)\n",pos.x, pos.y, pos.z, c_true_pos[0], c_true_pos[1], c_true_pos[2]);
+		//				// if c_true_pos on the edges do to the opposite pos too
+		//				int xp[2] = {c_true_pos[0], -1};
+		//				int yp[2] = {c_true_pos[1], -1};
+		//				int zp[2] = {c_true_pos[2], -1};
+		//				if (xp[0] == 0) { xp[1] = gGridCellReso[0]; }
+		//				if (xp[0] == gGridCellReso[0]) { xp[1] = 0; }
+		//				if (yp[0] == 0) { yp[1] = gGridCellReso[1]; }
+		//				if (yp[0] == gGridCellReso[1]) { yp[1] = 0; }
+		//				if (zp[0] == 0) { zp[1] = gGridCellReso[2]; }
+		//				if (zp[0] == gGridCellReso[2]) { zp[1] = 0; }
+		//				for (int i = 0; i < 8; i++) {
+		//					int idx = i % 2;
+		//					int idy = i / 2 % 2;
+		//					int idz = i / 4;
+		//					int reflect[3];
+		//					if (xp[idx] != -1 && yp[idy] != -1 && zp[idz] != -1) {
+		//						reflect[0] = xp[idx]; reflect[1] = yp[idy]; reflect[2] = zp[idz];
+		//						int coarse_lexi = lexi2gs(reflect, gGsVertexReso, gGsVertexEnd);
+		//						atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w * ratio);
+		//					}
+		//				}
+		//			}
+		//		}
+		//	}
+		//}
 	}
 }
 
@@ -1121,7 +1169,7 @@ __global__ void prolongate_correction_kernel_host_H(
 	VertexFlags* vcoarseflags,
 	devArray_t<int, 8> GsVertexEnd,
 	devArray_t<int, 8> GsCoarseVertexEnd,
-	int bx, int by, int bz
+	int bx, int by, int bz, float* gu
 ) {
 	__shared__ int coarseRatio[3];
 	__shared__ int gsCoarseVertexReso[3][8];
@@ -1218,7 +1266,7 @@ __global__ void prolongate_correction_kernel_host_H(
 				u = 0;
 			}
 		}
-		gU_H[0][tid] += VT(u);
+		gu[tid] += VT(u);
 	}
 }
 
@@ -1329,7 +1377,7 @@ void homo::Grid_H::prolongate_correction(int blockid)
 	int bz = blockid / (blockx * blocky);
 
 	make_kernel_param(&grid_size, &block_size, nv_fine, 256);
-	prolongate_correction_kernel_host_H << <grid_size, block_size >> > (is_root, nv_fine, vflags, vcoarseFlags, gsVertexEnd, gsCoarseVertexEnd, bx, by, bz);
+	prolongate_correction_kernel_host_H << <grid_size, block_size,0,stream[current] >> > (is_root, nv_fine, vflags, vcoarseFlags, gsVertexEnd, gsCoarseVertexEnd, bx, by, bz, u_g[current]);
 	cudaDeviceSynchronize();
 	cuda_error_check;
 }
@@ -1380,7 +1428,7 @@ void homo::Grid_H::restrict_residual(int blockid)
 	// need to change the order here
 	size_t grid_size, block_size;
 	make_kernel_param(&grid_size, &block_size, nv, 256);
-	restrict_residual_kernel_host_H << <grid_size, block_size >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd, bx, by, bz);
+	restrict_residual_kernel_host_H << <grid_size, block_size, 0, fine->stream[fine->current] >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd, bx, by, bz, fine->r_g[fine->current]);
 	cudaDeviceSynchronize();
 	cuda_error_check;
 }
