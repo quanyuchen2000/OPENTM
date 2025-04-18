@@ -110,13 +110,24 @@ void homo::MG_H::gsGrid0(int block_num) {
 	grids[0]->write_block_u_ggs(block_num - 1, false);
 	cudaDeviceSynchronize();
 	// caculate time and make full use of CPU
-	grids[0]->enforce_vertex_boundary(grids[0]->u_h);
-
+	// grids[0]->enforce_vertex_boundary(grids[0]->u_h);
+	
+	// prepare for padding of block 0
+	grids[0]->enforce_vertex_boundary_block(grids[0]->u_h, 0);
+	grids[0]->joint_vertex_boundary_block();
 	grids[0]->use_block_rhogs(0);
 	grids[0]->use_block_u_ggs(0);
 	grids[0]->use_block_f_ggs(0);
+	grids[0]->enforce_vertex_boundary_block(grids[0]->u_h, 1);
+	// prepare for padding of block 1
 	for (int i = 0; i < block_num - 1; i++) {
 		cudaDeviceSynchronize();
+		grids[0]->joint_vertex_boundary_block();
+		// joint the padding of i+1
+		// hang the request for prepare padding for block i+2
+		if (i + 2 < block_num) {
+			grids[0]->enforce_vertex_boundary_block(grids[0]->u_h, i+2);
+		}
 		if (i >= 1) {
 			grids[0]->write_block_r_ggs(i - 1);
 		}

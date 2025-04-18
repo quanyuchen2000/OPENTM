@@ -12,6 +12,8 @@
 #include <numeric>
 #include <iostream>
 #include <stdint.h>
+#include <thread>
+
 #include "gmem/DeviceBuffer.h" 
 #include <Eigen/Sparse>
 #include <Eigen/IterativeLinearSolvers>
@@ -117,6 +119,16 @@ struct Grid_H {
 	int next = 1;
 	std::vector<cudaStream_t> stream;
 	cudaEvent_t ready_event;
+	// parameters for async
+	struct asyncparam
+	{
+		int blockid;
+		int block_numx = 2;
+		int block_numy = 2;
+		int block_numz = 2;
+		std::vector<std::thread> workers;
+	}asp;
+	std::atomic<int> next_bid;
 
 	// coarse from finer grid
 	std::array<int, 3> upCoarse = {};
@@ -372,7 +384,8 @@ struct Grid_H {
 	void enforce_period_vertex(half* v[1], bool additive = false);
 	void enforce_period_vertex(float* v[1], bool additive = false);
 	void enforce_vertex_boundary(std::vector<VT>& v);
-
+	void enforce_vertex_boundary_block(std::vector<VT>& v, int blockid);
+	void joint_vertex_boundary_block();
 	void pad_vertex_data(float* v[1]);
 	void pad_vertex_data(half* v[1]);
 	void pad_vertex_data_host(std::vector<float>& v);
