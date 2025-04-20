@@ -963,7 +963,7 @@ __global__ void restrict_residual_kernel_host_H(
 	VertexFlags* vfineflags,
 	devArray_t<int, 8> GsVertexEnd,
 	devArray_t<int, 8> GsFineVertexEnd,
-	int bx, int by, int bz
+	int bx, int by, int bz, float *fineR
 ) {
 	__shared__ int gsVertexEnd[8];
 	__shared__ int gsFineVertexEnd[8];
@@ -1044,7 +1044,7 @@ __global__ void restrict_residual_kernel_host_H(
 					if (xp[idx] != -1 && yp[idy] != -1 && zp[idz] != -1) {
 						reflect[0] = xp[idx]; reflect[1] = yp[idy]; reflect[2] = zp[idz];
 						int coarse_lexi = lexi2gs(reflect, gGsVertexReso, gGsVertexEnd);
-						atomicAdd(&gF_H[0][coarse_lexi], float(gRfine_H[0][tid]) * w * ratio);
+						atomicAdd(&gF_H[0][coarse_lexi], float(fineR[tid]) * w * ratio);
 					}
 				}
 			}
@@ -1165,7 +1165,7 @@ __global__ void prolongate_correction_kernel_host_H(
 	VertexFlags* vcoarseflags,
 	devArray_t<int, 8> GsVertexEnd,
 	devArray_t<int, 8> GsCoarseVertexEnd,
-	int bx, int by, int bz
+	int bx, int by, int bz, float* u_g
 ) {
 	__shared__ int coarseRatio[3];
 	__shared__ int gsCoarseVertexReso[3][8];
@@ -1262,7 +1262,7 @@ __global__ void prolongate_correction_kernel_host_H(
 				u = 0;
 			}
 		}
-		gU_H[0][tid] += VT(u);
+		u_g[tid] += VT(u);
 	}
 }
 
@@ -1373,9 +1373,7 @@ void homo::Grid_H::prolongate_correction(int blockid)
 	int bz = blockid / (blockx * blocky);
 
 	make_kernel_param(&grid_size, &block_size, nv_fine, 256);
-	prolongate_correction_kernel_host_H << <grid_size, block_size >> > (is_root, nv_fine, vflags, vcoarseFlags, gsVertexEnd, gsCoarseVertexEnd, bx, by, bz);
-	cudaDeviceSynchronize();
-	cuda_error_check;
+	prolongate_correction_kernel_host_H << <grid_size, block_size , 0, stream[current] >> > (is_root, nv_fine, vflags, vcoarseFlags, gsVertexEnd, gsCoarseVertexEnd, bx, by, bz, u_g[current]);
 }
 
 void homo::Grid_H::restrict_residual(void)
@@ -1424,9 +1422,7 @@ void homo::Grid_H::restrict_residual(int blockid)
 	// need to change the order here
 	size_t grid_size, block_size;
 	make_kernel_param(&grid_size, &block_size, nv, 256);
-	restrict_residual_kernel_host_H << <grid_size, block_size >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd, bx, by, bz);
-	cudaDeviceSynchronize();
-	cuda_error_check;
+	restrict_residual_kernel_host_H << <grid_size, block_size, 0, fine->stream[fine->current] >> > (nv, vflags, vfineflags, gsVertexEnd, gsFineVertexEnd, bx, by, bz, fine->r_g[fine->current]);
 }
 
 template<typename T>

@@ -72,12 +72,19 @@ void homo::MG_H::Grid0(int block_num) {
 	}
 }
 void homo::MG_H::gsGrid0(int block_num) {
+	grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->u_h, 0);
+	grids[0]->joint_vertex_boundary_block();
 	grids[0]->use_block_rhogs(0);
 	grids[0]->use_block_u_ggs(0);
 	grids[0]->use_block_f_ggs(0);
+	grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->u_h, 1);
 	for (int i = 0; i < block_num - 1; i++) {
 		// give in rho_g u_g
 		cudaDeviceSynchronize();
+		grids[0]->joint_vertex_boundary_block();
+		if (i + 2 < block_num) {
+			grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->u_h, i + 2);
+		}
 		if (i >= 1) {
 			grids[0]->write_block_u_ggs(i - 1);
 		}
@@ -178,18 +185,26 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 
 		gsGrid0(block_num);
 
-		grids[0]->enforce_vertex_boundary(grids[0]->r_h);
-
 		double res = norm_host(grids[0]->r_h);
 		printf("residual is:%lf\n", res);
 		grids[1]->reset_force();
 		grids[1]->useGrid_g();
 
-
-		for (int i = 0; i < block_num; i++) {
-			grids[0]->use_block_r_g(i);
+		grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->r_h, 0);
+		grids[0]->joint_vertex_boundary_block();
+		grids[0]->use_block_r_ggs(0);
+		grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->r_h, 1);
+		for (int i = 0; i < block_num - 1; i++) {
+			cudaDeviceSynchronize();
+			grids[0]->joint_vertex_boundary_block();
+			if (i + 2 < block_num) {
+				grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->r_h, i + 2);
+			}
+			grids[0]->use_block_r_ggs(i + 1);
 			grids[1]->restrict_residual(i);
+			std::swap(grids[0]->current, grids[0]->next);
 		}
+		grids[1]->restrict_residual(block_num - 1);
 		grids[1]->pad_vertex_data(grids[1]->f_g);
 		grids[1]->reset_displacement();
 	}
@@ -225,12 +240,23 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		int block_num = block_numx * block_numy * block_numz;
 		int block_len = grids[0]->n_gsvertices();
 		grids[0]->useGrid_g();
-		for (int i = 0; i < block_num; i++) {
-			grids[0]->use_block_u_g(i);
+
+		grids[0]->use_block_u_ggs(0);
+		for (int i = 0; i < block_num - 1; i++) {
+			cudaDeviceSynchronize();
+			if (i >= 1) { grids[0]->write_block_u_ggs(i - 1); }
+			grids[0]->use_block_u_ggs(i + 1);
 			grids[0]->prolongate_correction(i);
-			grids[0]->write_block_u_g(i);
+			std::swap(grids[0]->current, grids[0]->next);
 		}
-		grids[0]->enforce_vertex_boundary(grids[0]->u_h);
+		cudaDeviceSynchronize();
+		grids[0]->write_block_u_ggs(block_num - 2);
+		cudaDeviceSynchronize();
+		grids[0]->prolongate_correction(block_num - 1);
+		grids[0]->write_block_u_ggs(block_num - 1, false);
+		cudaDeviceSynchronize();
+
+		//grids[0]->enforce_vertex_boundary(grids[0]->u_h);
 		gsGrid0(block_num);
 		grids[0]->enforce_vertex_boundary(grids[0]->r_h);
 	}
