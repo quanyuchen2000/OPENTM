@@ -1097,6 +1097,257 @@ void homo::Grid_H::enforce_vertex_boundary_block(std::vector<VT>& v, int blockid
 			});
 	}
 }
+void homo::Grid_H::enforce_vertex_boundary_block_seperate_version(std::vector<VT>& v, int blockid) {
+	asp.workers.clear();
+	asp.blockid = blockid;
+	const unsigned num_threads = std::thread::hardware_concurrency();
+	next_bid.store(0);
+	for (unsigned t = 0; t < num_threads; ++t) {
+		asp.workers.emplace_back([&] {
+			while (true) {
+				const int taskid = next_bid.fetch_add(1, std::memory_order_relaxed);
+				if (taskid >= 9 * 32) break;
+				const int block_numx = asp.block_numx;
+				const int block_numy = asp.block_numy;
+				const int block_numz = asp.block_numz;
+				const int bid = asp.blockid;
+				const std::vector<int> offset = {
+					bid % block_numx,
+					(bid / block_numx) % block_numy,
+					bid / (block_numx * block_numy)
+				};
+				const int ngsv = n_gsvertices();
+				const int segment_num = MIN_TRANSFER / 32;
+				int begin_id = taskid % 9 < 3 ? std::max(segment_num * taskid / 9, 1) : segment_num * taskid / 9;
+				int end_id = taskid % 9 < 3 ? std::min(segment_num * (taskid / 9 + 1), MIN_TRANSFER + 2) : std::min(segment_num * (taskid / 9 + 1), MIN_TRANSFER + 3);
+				// taskid % 9 is the task class 
+				// taskid / 9 is the segment
+				switch (taskid % 9) {
+				case 0:
+					for (int i = begin_id; i < end_id; i++) {
+						for (int j = 1; j < MIN_TRANSFER + 2; j++) {
+							int pos[3] = { MIN_TRANSFER + 1, i, j };
+							const int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto new_offset = offset;
+							new_offset[0] = (new_offset[0] + 1) % block_numx;
+							pos[0] = 1;
+							if (i == MIN_TRANSFER + 1) {
+								pos[1] = 1;
+								new_offset[1] = (new_offset[1] + 1) % block_numy;
+							}
+							if (j == MIN_TRANSFER + 1) {
+								pos[2] = 1;
+								new_offset[2] = (new_offset[2] + 1) % block_numz;
+							}
+							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 1:
+					for (int j = begin_id; j < end_id; j++) {
+						for (int i = 1; i < MIN_TRANSFER + 2; i++) {
+							int pos[3] = { i, MIN_TRANSFER + 1, j };
+							const int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto new_offset = offset;
+							new_offset[1] = (new_offset[1] + 1) % block_numy;
+							pos[1] = 1;
+							if (i == MIN_TRANSFER + 1) {
+								pos[0] = 1;
+								new_offset[0] = (new_offset[0] + 1) % block_numx;
+							}
+							if (j == MIN_TRANSFER + 1) {
+								pos[2] = 1;
+								new_offset[2] = (new_offset[2] + 1) % block_numz;
+							}
+							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 2:
+					for (int j = begin_id; j < end_id; j++) {
+						for (int i = 1; i < MIN_TRANSFER + 2; i++) {
+							int pos[3] = { i, j, MIN_TRANSFER + 1 };
+							const int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto new_offset = offset;
+							new_offset[2] = (new_offset[2] + 1) % block_numz;
+							pos[2] = 1;
+							if (i == MIN_TRANSFER + 1) {
+								pos[0] = 1;
+								new_offset[0] = (new_offset[0] + 1) % block_numx;
+							}
+							if (j == MIN_TRANSFER + 1) {
+								pos[1] = 1;
+								new_offset[1] = (new_offset[1] + 1) % block_numy;
+							}
+							const int src_bid = new_offset[0] + new_offset[1] * block_numx + new_offset[2] * block_numx * block_numy;
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 3:
+					for (int k = begin_id; k < end_id; k++) {
+						for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+							int pos[3] = { 0, j, k };
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsetx = offset;
+							offsetx[0] = (offsetx[0] - 1 + block_numx) % block_numx;
+							pos[0] = MIN_TRANSFER;
+
+							offsetx[1] = (j == 0) ?
+								((offsetx[1] - 1 + block_numy) % block_numy) :
+								(j == MIN_TRANSFER + 2) ? (offsetx[1] + 1) % block_numy : offsetx[1];
+							pos[1] = (j == 0) ? MIN_TRANSFER : (j == MIN_TRANSFER + 2) ? 2 : j;
+
+							offsetx[2] = (k == 0) ?
+								((offsetx[2] - 1 + block_numz) % block_numz) :
+								(k == MIN_TRANSFER + 2) ? (offsetx[2] + 1) % block_numz : offsetx[2];
+							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
+							int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+							int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 4:
+					for (int k = begin_id; k < end_id; k++) {
+						for (int j = 0; j < MIN_TRANSFER + 3; j++) {
+							int pos[3] = { MIN_TRANSFER + 2, j, k };
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsetx = offset;
+							offsetx[0] = (offsetx[0] + 1) % block_numx;
+							pos[0] = 2;
+
+							offsetx[1] = (j == 0) ?
+								((offsetx[1] - 1 + block_numy) % block_numy) :
+								(j == MIN_TRANSFER + 2) ? (offsetx[1] + 1) % block_numy : offsetx[1];
+							pos[1] = (j == 0) ? MIN_TRANSFER : (j == MIN_TRANSFER + 2) ? 2 : j;
+
+							offsetx[2] = (k == 0) ?
+								((offsetx[2] - 1 + block_numz) % block_numz) :
+								(k == MIN_TRANSFER + 2) ? (offsetx[2] + 1) % block_numz : offsetx[2];
+							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
+							int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+							int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 5:
+					for (int k = begin_id; k < end_id; k++) {
+						for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+							int pos[3] = { i, 0, k };
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsety = offset;
+
+							offsety[1] = ((offsety[1] - 1 + block_numy) % block_numy);
+							pos[1] = MIN_TRANSFER;
+
+							offsety[0] = (i == 0) ?
+								((offsety[0] - 1 + block_numx) % block_numx) :
+								(i == MIN_TRANSFER + 2) ? (offsety[0] + 1) % block_numx : offsety[0];
+							pos[0] = (i == 0) ? MIN_TRANSFER : (i == MIN_TRANSFER + 2) ? 2 : i;
+
+							offsety[2] = (k == 0) ?
+								((offsety[2] - 1 + block_numz) % block_numz) :
+								(k == MIN_TRANSFER + 2) ? (offsety[2] + 1) % block_numz : offsety[2];
+							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
+
+							const int src_bid = offsety[0] + offsety[1] * block_numx + offsety[2] * (block_numx * block_numy);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 6:
+					for (int k = begin_id; k < end_id; k++) {
+						for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+							int pos[3] = { i, MIN_TRANSFER + 2, k };
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsety = offset;
+
+							offsety[1] = (offsety[1] + 1) % block_numy;
+							pos[1] = 2;
+
+							offsety[0] = (i == 0) ?
+								((offsety[0] - 1 + block_numx) % block_numx) :
+								(i == MIN_TRANSFER + 2) ? (offsety[0] + 1) % block_numx : offsety[0];
+							pos[0] = (i == 0) ? MIN_TRANSFER : (i == MIN_TRANSFER + 2) ? 2 : i;
+
+							offsety[2] = (k == 0) ?
+								((offsety[2] - 1 + block_numz) % block_numz) :
+								(k == MIN_TRANSFER + 2) ? (offsety[2] + 1) % block_numz : offsety[2];
+							pos[2] = (k == 0) ? MIN_TRANSFER : (k == MIN_TRANSFER + 2) ? 2 : k;
+
+							const int src_bid = offsety[0] + offsety[1] * block_numx + offsety[2] * (block_numx * block_numy);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 7:
+					for (int j = begin_id; j < end_id; j++) {
+						for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+							int pos[3] = { i, j, 0 };
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsetz = offset;
+
+							offsetz[2] = ((offsetz[2] - 1 + block_numz) % block_numz);
+							pos[2] = MIN_TRANSFER;
+
+							offsetz[0] = (i == 0) ?
+								((offsetz[0] - 1 + block_numx) % block_numx) :
+								(i == MIN_TRANSFER + 2) ? (offsetz[0] + 1) % block_numx : offsetz[0];
+							pos[0] = (i == 0) ? MIN_TRANSFER : (i == MIN_TRANSFER + 2) ? 2 : i;
+
+							offsetz[1] = (j == 0) ?
+								((offsetz[1] - 1 + block_numy) % block_numy) :
+								(j == MIN_TRANSFER + 2) ? (offsetz[1] + 1) % block_numy : offsetz[1];
+							pos[1] = (j == 0) ? MIN_TRANSFER : (j == MIN_TRANSFER + 2) ? 2 : j;
+
+							const int src_bid = offsetz[0] + offsetz[1] * block_numx + offsetz[2] * (block_numx * block_numy);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				case 8:
+					for (int j = begin_id; j < end_id; j++) {
+						for (int i = 0; i < MIN_TRANSFER + 3; i++) {
+							int pos[3] = { i, j, MIN_TRANSFER + 2 };
+							int gsid_tar = bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							auto offsetz = offset;
+
+							offsetz[2] = (offsetz[2] + 1) % block_numz;
+							pos[2] = 2;
+
+							offsetz[0] = (i == 0) ?
+								((offsetz[0] - 1 + block_numx) % block_numx) :
+								(i == MIN_TRANSFER + 2) ? (offsetz[0] + 1) % block_numx : offsetz[0];
+							pos[0] = (i == 0) ? MIN_TRANSFER : (i == MIN_TRANSFER + 2) ? 2 : i;
+
+							offsetz[1] = (j == 0) ?
+								((offsetz[1] - 1 + block_numy) % block_numy) :
+								(j == MIN_TRANSFER + 2) ? (offsetz[1] + 1) % block_numy : offsetz[1];
+							pos[1] = (j == 0) ? MIN_TRANSFER : (j == MIN_TRANSFER + 2) ? 2 : j;
+
+							const int src_bid = offsetz[0] + offsetz[1] * block_numx + offsetz[2] * (block_numx * block_numy);
+							const int gsid_src = src_bid * ngsv + lexi2gs(pos, gsVertexReso, gsVertexSetEnd, true);
+							v[gsid_tar] = v[gsid_src];
+						}
+					}
+					break;
+				default:
+					break;
+				}
+			}
+			});
+	}
+}
 void homo::Grid_H::joint_vertex_boundary_block() {
 	for (auto& th : asp.workers) {
 		if (th.joinable()) th.join();

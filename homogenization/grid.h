@@ -19,7 +19,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 128
+#define MIN_TRANSFER 256
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
 	using hvec3 = vec<3, half>;
@@ -385,6 +385,7 @@ struct Grid_H {
 	void enforce_period_vertex(float* v[1], bool additive = false);
 	void enforce_vertex_boundary(std::vector<VT>& v);
 	void enforce_vertex_boundary_block(std::vector<VT>& v, int blockid);
+	void enforce_vertex_boundary_block_seperate_version(std::vector<VT>& v, int blockid);
 	void joint_vertex_boundary_block();
 	void pad_vertex_data(float* v[1]);
 	void pad_vertex_data(half* v[1]);
