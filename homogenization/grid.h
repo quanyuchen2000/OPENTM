@@ -17,7 +17,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 256
+#define MIN_TRANSFER 64
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
 	using hvec3 = vec<3, half>;
