@@ -190,7 +190,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			float final_val;
 			int itn;
 			clock_t start = clock();
-			for (itn = 0; itn < 500; itn++) {
+			for (itn = 0; itn < 200; itn++) {
 
 				caculate_rhop(rho, rhop, config);
 

@@ -361,14 +361,14 @@ void homo::Homogenization_H::heatMatrix(double C[3][3]) {
 		}
 
 		for (int blockid = 0; blockid < block_num; blockid++) {
-		int bx = blockid % block_numx;
-		int by = (blockid / block_numx) % block_numy;
-		int bz = blockid / (block_numx * block_numy);
-		int offset = (bx + block_numx * by + block_numx * block_numy * bz) * grid->n_gsvertices();
-		VertexFlags* vflags = grid->vertflag;
-		CellFlags* eflags = grid->cellflag;
-		int nv = grid->n_gsvertices();
-		size_t grid_size, block_size;
+			int bx = blockid % block_numx;
+			int by = (blockid / block_numx) % block_numy;
+			int bz = blockid / (block_numx * block_numy);
+			int offset = (bx + block_numx * by + block_numx * block_numy * bz) * grid->n_gsvertices();
+			VertexFlags* vflags = grid->vertflag;
+			CellFlags* eflags = grid->cellflag;
+			int nv = grid->n_gsvertices();
+			size_t grid_size, block_size;
 			grid->use_block_rho(blockid);
 			float* tmp = getMem().getBuffer("temp_rho0")->data<float>();
 			grid->update_host(tmp);
@@ -413,7 +413,6 @@ void homo::Homogenization_H::heatMatrix(double C[3][3]) {
 			cudaDeviceSynchronize();
 			cuda_error_check;
 		}
-
 	}
 	else {
 		if (config.useManagedMemory) {
