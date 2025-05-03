@@ -5,6 +5,7 @@
 #include <thread>
 #include <execution>
 #include <numeric>
+#include <mutex>
 inline float tanproj(float val, float beta, float tau = 0.5f) {
 	const float tbtau = tanhf(beta * tau);
 	float newval = (tbtau + tanhf(beta * (val - tau))) / (tbtau + tanhf(beta * (1.f - tau)));
@@ -308,7 +309,417 @@ void update_density_boundary(std::vector<float>& rho, cfg::HomoConfig config) {
 		if (th.joinable()) th.join();
 	}
 }
+void build_filter_block(std::vector<float>& rho, std::vector<float>& padded, int blockid, int filter_radius, int blocksize) {
+	int fr = filter_radius;
+	int oldsz = blocksize - 2 * fr;
+	int offsetnum = oldsz * oldsz * oldsz;
+	int block_numx = 2;
+	int block_numy = 2;
+	int block_numz = 2;
+	int offset[3] = { blockid % block_numx, blockid / block_numx % block_numy, blockid / (block_numx * block_numy) };
+	for (int i = fr; i < blocksize - fr; i++) {
+		for (int j = fr; j < blocksize - fr; j++) {
+			for (int k = fr; k < blocksize - fr; k++) {
+				padded[(k * blocksize + j) * blocksize + i] = rho[offsetnum * blockid + ((k - fr) * oldsz + (j - fr)) * oldsz + (i - fr)];
+			}
+		}
+	}
+	for (int k = 0; k < blocksize; k++) {
+		for (int j = 0; j < blocksize; j++) {
+#pragma unroll
+			for (int i = 0; i < filter_radius; i++) {
+				int pos[3] = { i - fr, j - fr, k - fr };
+				int id_tar = i + blocksize * (j + blocksize * k);
+				auto offsetx = offset;
+				offsetx[0] = (offsetx[0] - 1 + block_numx) % block_numx;
+				pos[0] = MIN_TRANSFER - fr + i;
 
+				if (j < filter_radius) {
+					offsetx[1] = (offsetx[1] - 1 + block_numy) % block_numy;
+					pos[1] = MIN_TRANSFER - fr + j;
+				}
+				else if (blocksize - fr <= j) {
+					offsetx[1] = (offsetx[1] + 1) % block_numy;
+					pos[1] = j - blocksize + fr;
+				}
+
+				if (k < filter_radius) {
+					offsetx[2] = (offsetx[2] - 1 + block_numz) % block_numz;
+					pos[2] = MIN_TRANSFER - fr + k;
+				}
+				else if (blocksize - fr <= k) {
+					offsetx[2] = (offsetx[2] + 1) % block_numz;
+					pos[2] = k - blocksize + fr;
+				}
+
+				int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+				int gsid_src = src_bid * offsetnum + pos[0] + oldsz * (pos[1] + oldsz * pos[2]);
+				padded[id_tar] = rho[gsid_src];
+			}
+		}
+	}
+	for (int k = 0; k < blocksize; k++) {
+		for (int j = 0; j < blocksize; j++) {
+#pragma unroll
+			for (int i = blocksize - fr; i < blocksize; i++) {
+				int pos[3] = { i - fr, j - fr, k - fr };
+				int id_tar = i + blocksize * (j + blocksize * k);
+				auto offsetx = offset;
+				offsetx[0] = (offsetx[0] + 1) % block_numx;
+				pos[0] = i - blocksize + fr;
+
+				if (j < filter_radius) {
+					offsetx[1] = (offsetx[1] - 1 + block_numy) % block_numy;
+					pos[1] = MIN_TRANSFER - fr + j;
+				}
+				else if (blocksize - fr <= j) {
+					offsetx[1] = (offsetx[1] + 1) % block_numy;
+					pos[1] = j - blocksize + fr;
+				}
+
+
+				if (k < filter_radius) {
+					offsetx[2] = (offsetx[2] - 1 + block_numz) % block_numz;
+					pos[2] = MIN_TRANSFER - fr + k;
+				}
+				else if (blocksize - fr <= k) {
+					offsetx[2] = (offsetx[2] + 1) % block_numz;
+					pos[2] = k - blocksize + fr;
+				}
+
+				int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+				int gsid_src = src_bid * offsetnum + pos[0] + oldsz * (pos[1] + oldsz * pos[2]);
+				padded[id_tar] = rho[gsid_src];
+			}
+		}
+	}
+	for (int k = 0; k < blocksize; k++) {
+#pragma unroll
+		for (int j = 0; j < fr; j++) {
+			for (int i = fr; i < blocksize - fr; i++) {
+				int pos[3] = { i - fr, j - fr, k - fr };
+				int id_tar = i + blocksize * (j + blocksize * k);
+				auto offsetx = offset;
+
+				offsetx[1] = (offsetx[1] - 1 + block_numy) % block_numy;
+				pos[1] = MIN_TRANSFER - fr + j;
+
+				if (k < filter_radius) {
+					offsetx[2] = (offsetx[2] - 1 + block_numz) % block_numz;
+					pos[2] = MIN_TRANSFER - fr + k;
+				}
+				else if (blocksize - fr <= k) {
+					offsetx[2] = (offsetx[2] + 1) % block_numz;
+					pos[2] = k - blocksize + fr;
+				}
+
+				int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+				int gsid_src = src_bid * offsetnum + pos[0] + oldsz * (pos[1] + oldsz * pos[2]);
+				padded[id_tar] = rho[gsid_src];
+			}
+		}
+	}
+	for (int k = 0; k < blocksize; k++) {
+#pragma unroll
+		for (int j = blocksize - fr; j < blocksize; j++) {
+			for (int i = fr; i < blocksize - fr; i++) {
+				int pos[3] = { i - fr, j - fr, k - fr };
+				int id_tar = i + blocksize * (j + blocksize * k);
+				auto offsetx = offset;
+				offsetx[1] = (offsetx[1] + 1) % block_numy;
+				pos[1] = j - blocksize + fr;
+				if (k < filter_radius) {
+					offsetx[2] = (offsetx[2] - 1 + block_numz) % block_numz;
+					pos[2] = MIN_TRANSFER - fr + k;
+				}
+				else if (blocksize - fr <= k) {
+					offsetx[2] = (offsetx[2] + 1) % block_numz;
+					pos[2] = k - blocksize + fr;
+				}
+				int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+				int gsid_src = src_bid * offsetnum + pos[0] + oldsz * (pos[1] + oldsz * pos[2]);
+				padded[id_tar] = rho[gsid_src];
+			}
+		}
+	}
+#pragma unroll
+	for (int k = 0; k < fr; k++) {
+		for (int j = fr; j < blocksize - fr; j++) {
+			for (int i = fr; i < blocksize - fr; i++) {
+				int pos[3] = { i - fr, j - fr, k - fr };
+				int id_tar = i + blocksize * (j + blocksize * k);
+				auto offsetx = offset;
+				offsetx[2] = (offsetx[2] - 1 + block_numz) % block_numz;
+				pos[2] = MIN_TRANSFER - fr + k;
+				int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+				int gsid_src = src_bid * offsetnum + pos[0] + oldsz * (pos[1] + oldsz * pos[2]);
+				padded[id_tar] = rho[gsid_src];
+			}
+		}
+	}
+#pragma unroll
+	for (int k = blocksize - fr; k < blocksize; k++) {
+		for (int j = fr; j < blocksize - fr; j++) {
+			for (int i = fr; i < blocksize - fr; i++) {
+				int pos[3] = { i - fr, j - fr, k - fr };
+				int id_tar = i + blocksize * (j + blocksize * k);
+				auto offsetx = offset;
+				offsetx[2] = (offsetx[2] + 1) % block_numz;
+				pos[2] = k - blocksize + fr;
+				int src_bid = offsetx[0] + offsetx[1] * block_numx + offsetx[2] * block_numx * block_numy;
+				int gsid_src = src_bid * offsetnum + pos[0] + oldsz * (pos[1] + oldsz * pos[2]);
+				padded[id_tar] = rho[gsid_src];
+			}
+		}
+	}
+}
+
+void out_filter_block(std::vector<float>& rho, std::vector<float>& padded, int blockid, int filter_radius, int blocksize) {
+	int fr = filter_radius;
+	int oldsz = blocksize - 2 * fr;
+	int offsetnum = oldsz * oldsz * oldsz;
+	int block_numx = 2;
+	int block_numy = 2;
+	int block_numz = 2;
+#pragma omp parallel for collapse(3) schedule(static)
+	for (int i = fr; i < blocksize - fr; i++) {
+		for (int j = fr; j < blocksize - fr; j++) {
+			for (int k = fr; k < blocksize - fr; k++) {
+				rho[offsetnum * blockid + ((k - fr) * oldsz + (j - fr)) * oldsz + (i - fr)] = padded[(k * blocksize + j) * blocksize + i];
+			}
+		}
+	}
+}
+
+//void filterneighbor(int pos[3], int blockpos[3], int radius, float wsum, std::vector<float>& rho, std::vector<float>& sens) {
+//	float sum = 0;
+//	for (int nei = 0; nei < wfunc.size(); nei++) {
+//		int offset[3];
+//		ker.neigh(nei, offset);
+//		float w = ker.weight(offset);
+//		int neighpos[3] = { epos[0] + offset[0], epos[1] + offset[1], epos[2] + offset[2] };
+//		if (ker.is_period()) {
+//			for (int i = 0; i < 3; i++) neighpos[i] = (neighpos[i] + reso[i]) % reso[i];
+//		}
+//		if (is_bounded(neighpos, ereso)) {
+//			int neighid = neighpos[0] + (neighpos[1] + neighpos[2] * ereso[1]) * pitchT;
+//			//w /= weightSum[neighid];
+//			sum += sens[neighid] * rho[neighid] * w;
+//			wsum += w;
+//		}
+//	}
+//	int eid = epos[0] + (epos[1] + epos[2] * ereso[1]) * pitchT;
+//	sum /= wsum * rho[eid];
+//	newsens[eid] = sum;
+//
+//	float sum = 0;
+//	for (int k = -radius; k <= radius; k++) {
+//		for (int j = -radius; j <= radius; j++) {
+//			for (int i = -radius; i <= radius; i++) {
+//				float w = 1 - sqrt(float(i * i + j * j + k * k) / (radius * radius));
+//				int neighpos[3] = {pos[0] + i, pos[1] + j, pos[2] + k};
+//				int blockpos[3] = {};
+//
+//				sum += sens[neighid] * rho[neighid] * w;
+//			}
+//		}
+//	}
+//	sum /= wsum * rho[eid];
+//
+//}
+float caculatewsum(int radius) {
+	float wsum = 0;
+	for (int k = -radius; k <= radius; k++) {
+		for (int j = -radius; j <= radius; j++) {
+			for (int i = -radius; i <= radius; i++) {
+				float w = 1 - sqrt(float(i * i + j * j + k * k) / (radius * radius));
+				wsum += w;
+			}
+		}
+	}
+	return wsum;
+}
+void calboundary(std::vector<float>& rho, std::vector<float>& sens, std::vector<float>& boundary, int blockid, int filter_radius) {
+	int fr = filter_radius;
+	int block[3] = { blockid % 2, blockid / 2 % 2, blockid / 4 };
+	int tsknum = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER - pow(MIN_TRANSFER - 2 * fr, 3);
+	int blocksize = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER;
+	float wsum = caculatewsum(fr);
+	int offset0 = MIN_TRANSFER * MIN_TRANSFER * fr;
+	int offset1 = MIN_TRANSFER * (MIN_TRANSFER - 2 * fr) * fr;
+	int offset2 = (MIN_TRANSFER - 2 * fr) * (MIN_TRANSFER - 2 * fr) * fr;
+	const unsigned num_thread = std::max(4u, std::thread::hardware_concurrency());
+	std::vector<std::thread> workers;
+	std::atomic<int> counter(0);
+
+	for (unsigned t = 0; t < num_thread; ++t) {
+		workers.emplace_back([&]() {
+			while (true) {
+				const int i = counter.fetch_add(1, std::memory_order_relaxed);
+				if (i >= tsknum) break;
+				std::vector<int> pos(3);
+				if (i < offset0) {
+					pos = { i % MIN_TRANSFER, i / MIN_TRANSFER % MIN_TRANSFER, i / (MIN_TRANSFER * MIN_TRANSFER) };
+				}
+				else if (i < 2 * offset0) {
+					int id = i - offset0;
+					pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % MIN_TRANSFER, MIN_TRANSFER - 1 - (id / (MIN_TRANSFER * MIN_TRANSFER)) };
+				}
+				else if (i < 2 * offset0 + offset1) {
+					int id = i - 2 * offset0;
+					pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr };
+				}
+				else if (i < 2 * offset0 + 2 * offset1) {
+					int id = i - 2 * offset0 - offset1;
+					pos = { id % MIN_TRANSFER, MIN_TRANSFER - 1 - id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr };
+				}
+				else if (i < 2 * offset0 + 2 * offset1 + offset2) {
+					int id = i - 2 * (offset0 + offset1);
+					pos = { id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr };
+				}
+				else {
+					int id = i - 2 * (offset0 + offset1) - offset2;
+					pos = { MIN_TRANSFER - 1 - id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr };
+				}
+				float sum = 0;
+				for (int k = -fr; k <= fr; k++) {
+					for (int j = -fr; j <= fr; j++) {
+						for (int ix = -fr; ix <= fr; ix++) {
+							float w = 1 - sqrt(float(ix * ix + j * j + k * k) / (fr * fr));
+							int neighpos[3] = { pos[0] + ix + MIN_TRANSFER, pos[1] + j + MIN_TRANSFER, pos[2] + k + MIN_TRANSFER };
+							int neighid = neighpos[0] % MIN_TRANSFER + (neighpos[1] % MIN_TRANSFER) * MIN_TRANSFER + (neighpos[2] % MIN_TRANSFER) * MIN_TRANSFER * MIN_TRANSFER;
+							int blockpos[3] = { block[0] - 1 + neighpos[0] / MIN_TRANSFER, block[1] - 1 + neighpos[1] / MIN_TRANSFER ,block[2] - 1 + neighpos[2] / MIN_TRANSFER };
+							int blockid = (blockpos[0] + 2) % 2 + (blockpos[1] + 2) % 2 * 2 + (blockpos[2] + 2) % 2 * 4;
+							int nid = blockid * blocksize + neighid;
+							sum += sens[nid] * rho[nid] * w;
+						}
+					}
+				}
+				sum /= wsum * rho[(block[0] + block[1] * 2 + block[2] * 4) * blocksize + pos[0] + pos[1] * MIN_TRANSFER + pos[2] * MIN_TRANSFER * MIN_TRANSFER];
+				boundary[i] = sum;
+			}
+		});
+	}
+	for (auto& t : workers) {
+		if (t.joinable()) t.join();
+	}
+	//for (int i = 0; i < tsknum; i++) {
+	//	std::vector<int> pos(3);
+	//	if (i < offset0) {
+	//		pos = { i % MIN_TRANSFER, i / MIN_TRANSFER % MIN_TRANSFER, i / (MIN_TRANSFER * MIN_TRANSFER) };
+	//	}
+	//	else if (i < 2 * offset0) {
+	//		int id = i - offset0;
+	//		pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % MIN_TRANSFER, MIN_TRANSFER - 1 - (id / (MIN_TRANSFER * MIN_TRANSFER)) };
+	//	}
+	//	else if (i < 2 * offset0 + offset1) {
+	//		int id = i - 2 * offset0;
+	//		pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr};
+	//	}
+	//	else if (i < 2 * offset0 + 2 * offset1) {
+	//		int id = i - 2 * offset0 - offset1;
+	//		pos = { id % MIN_TRANSFER, MIN_TRANSFER - 1 - id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr };
+	//	}
+	//	else if (i < 2 * offset0 + 2 * offset1 + offset2) {
+	//		int id = i - 2 * (offset0 + offset1);
+	//		pos = { id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr};
+	//	}
+	//	else {
+	//		int id = i - 2 * (offset0 + offset1) - offset2;
+	//		pos = { MIN_TRANSFER - 1 - id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr };
+	//	}
+	//	float sum = 0;
+	//	for (int k = -fr; k <= fr; k++) {
+	//		for (int j = -fr; j <= fr; j++) {
+	//			for (int ix = -fr; ix <= fr; ix++) {
+	//				float w = 1 - sqrt(float(ix * ix + j * j + k * k) / (fr * fr));
+	//				int neighpos[3] = { pos[0] + ix + MIN_TRANSFER, pos[1] + j + MIN_TRANSFER, pos[2] + k +MIN_TRANSFER};
+	//				int neighid = neighpos[0] % MIN_TRANSFER + (neighpos[1] % MIN_TRANSFER) * MIN_TRANSFER + (neighpos[2] % MIN_TRANSFER) * MIN_TRANSFER * MIN_TRANSFER;
+	//				int blockpos[3] = {block[0] - 1 + neighpos[0] / MIN_TRANSFER, block[1] - 1 + neighpos[1] / MIN_TRANSFER ,block[2] - 1 + neighpos[2] / MIN_TRANSFER };
+	//				int blockid = (blockpos[0] + 2) % 2 + (blockpos[1] + 2) % 2 * 2 + (blockpos[2] + 2) % 2 * 4;
+	//				int nid = blockid * blocksize + neighid;
+	//				sum += sens[nid] * rho[nid] * w;
+	//			}
+	//		}
+	//	}
+	//	sum /= wsum * rho[(block[0] + block[1] * 2 + block[2] * 4) * blocksize + pos[0] + pos[1] * MIN_TRANSFER + pos[2] * MIN_TRANSFER * MIN_TRANSFER];
+	//	boundary[i] = sum;
+	//}
+}
+void reboundary(std::vector<float>& sens, std::vector<float>& boundary, int blockid, int fr) {
+	int tsknum = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER - pow(MIN_TRANSFER - 2 * fr, 3);
+	int offset0 = MIN_TRANSFER * MIN_TRANSFER * fr;
+	int offset1 = MIN_TRANSFER * (MIN_TRANSFER - 2 * fr) * fr;
+	int offset2 = (MIN_TRANSFER - 2 * fr) * (MIN_TRANSFER - 2 * fr) * fr;
+	int blocksize = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER;
+	const unsigned num_thread = std::max(4u, std::thread::hardware_concurrency());
+	std::vector<std::thread> workers;
+	std::atomic<int> counter(0);
+
+	for (unsigned t = 0; t < num_thread; ++t) {
+		workers.emplace_back([&]() {
+			while (true) {
+				const int i = counter.fetch_add(1, std::memory_order_relaxed);
+				if (i >= tsknum) break;
+				std::vector<int> pos(3);
+				if (i < offset0) {
+					pos = { i % MIN_TRANSFER, i / MIN_TRANSFER % MIN_TRANSFER, i / (MIN_TRANSFER * MIN_TRANSFER) };
+				}
+				else if (i < 2 * offset0) {
+					int id = i - offset0;
+					pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % MIN_TRANSFER, MIN_TRANSFER - 1 - (id / (MIN_TRANSFER * MIN_TRANSFER)) };
+				}
+				else if (i < 2 * offset0 + offset1) {
+					int id = i - 2 * offset0;
+					pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr };
+				}
+				else if (i < 2 * offset0 + 2 * offset1) {
+					int id = i - 2 * offset0 - offset1;
+					pos = { id % MIN_TRANSFER, MIN_TRANSFER - 1 - id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr };
+				}
+				else if (i < 2 * offset0 + 2 * offset1 + offset2) {
+					int id = i - 2 * (offset0 + offset1);
+					pos = { id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr };
+				}
+				else {
+					int id = i - 2 * (offset0 + offset1) - offset2;
+					pos = { MIN_TRANSFER - 1 - id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr };
+				}
+				sens[blockid * blocksize + pos[0] + pos[1] * MIN_TRANSFER + pos[2] * MIN_TRANSFER * MIN_TRANSFER] = boundary[i];
+			}
+		});
+	}
+	for (auto& t : workers) {
+		if (t.joinable()) t.join();
+	}
+	//for (int i = 0; i < tsknum; i++) {
+	//	std::vector<int> pos(3);
+	//	if (i < offset0) {
+	//		pos = { i % MIN_TRANSFER, i / MIN_TRANSFER % MIN_TRANSFER, i / (MIN_TRANSFER * MIN_TRANSFER) };
+	//	}
+	//	else if (i < 2 * offset0) {
+	//		int id = i - offset0;
+	//		pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % MIN_TRANSFER, MIN_TRANSFER - 1 - (id / (MIN_TRANSFER * MIN_TRANSFER)) };
+	//	}
+	//	else if (i < 2 * offset0 + offset1) {
+	//		int id = i - 2 * offset0;
+	//		pos = { id % MIN_TRANSFER, id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr };
+	//	}
+	//	else if (i < 2 * offset0 + 2 * offset1) {
+	//		int id = i - 2 * offset0 - offset1;
+	//		pos = { id % MIN_TRANSFER, MIN_TRANSFER - 1 - id / MIN_TRANSFER % fr, id / (MIN_TRANSFER * fr) + fr };
+	//	}
+	//	else if (i < 2 * offset0 + 2 * offset1 + offset2) {
+	//		int id = i - 2 * (offset0 + offset1);
+	//		pos = { id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr };
+	//	}
+	//	else {
+	//		int id = i - 2 * (offset0 + offset1) - offset2;
+	//		pos = { MIN_TRANSFER - 1 - id % fr, id / fr % (MIN_TRANSFER - 2 * fr) + fr, id / (fr * (MIN_TRANSFER - 2 * fr)) + fr };
+	//	}
+	//	sens[blockid * blocksize + pos[0] + pos[1] * MIN_TRANSFER + pos[2] * MIN_TRANSFER * MIN_TRANSFER] = boundary[i];
+	//}
+}
 void subtract_mean_parallel(std::vector<float>& A) {
 	if (A.empty()) return;
 

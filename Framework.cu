@@ -184,13 +184,13 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 
 		{
 			ConvergeChecker criteria(config.finthres);
-			OCOptimizer oc(MIN_TRANSFER*MIN_TRANSFER*MIN_TRANSFER, 0.001, 0.02, 0.5);
+			OCOptimizer oc(reso * reso * reso, 0.001, 0.02, 0.5);
 
 			VolumeGovernor governor;
 			float final_val;
 			int itn;
 			clock_t start = clock();
-			for (itn = 0; itn < 1; itn++) {
+			for (itn = 0; itn < 500; itn++) {
 
 				caculate_rhop(rho, rhop, config);
 
@@ -230,81 +230,86 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				std::vector<float> sens;
 				caculate_sens(sens, *sensp, rho, config);
 
-				// block optimization
-				// pay attention to 8
-				int blockne = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER;
-				int ereso[3] = { MIN_TRANSFER,MIN_TRANSFER,MIN_TRANSFER };
-				for (int i = 0; i < 8; i++) {
-					float* grho = getMem().getBuffer("temp_rho0")->data<float>();
-					float* gsens = getMem().getBuffer("temp_rho1")->data<float>();
-					cudaMemcpy(grho, rho.data()+ i * blockne, blockne * sizeof(float), cudaMemcpyHostToDevice);
-					cudaMemcpy(gsens, sens.data()+ i * blockne, blockne * sizeof(float), cudaMemcpyHostToDevice);
-					oc.filterSens(gsens, grho, MIN_TRANSFER, ereso);
-					cudaMemcpy(sens.data() + i * blockne, gsens, blockne * sizeof(float), cudaMemcpyDeviceToHost);
-				}
-				std::vector<float> newrho = rho;
-				float volratio = governor.get_volume_bound();
-				float maxSens = abs(find_max_abs(sens));
-				printf("max sens = %f\n", maxSens);
-				float minSens = 0;
-				for (int itn = 0; itn < 20; itn++) {
-					float gSens = (maxSens + minSens) / 2;
+				//// block optimization
+				//// pay attention to 8
+				//int blockne = MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER;
+				//int ereso[3] = { MIN_TRANSFER,MIN_TRANSFER,MIN_TRANSFER };
+				//int fr = 2;
+				//std::vector<float> boundary(blockne - pow(MIN_TRANSFER - 2 * fr, 3));
 
-					std::for_each(std::execution::par_unseq, newrho.begin(), newrho.end(),
-						[&](auto& nr) {
-							int i = &nr - &newrho[0];
-							float r = rho[i];
-							float B = -sens[i] / gSens;
-							if (B < 0) B = 0.01f;
-							float newr = sqrt(B) * r;
-							if (newr - r < -0.02) newr = r - 0.02;
-							if (newr - r > 0.02) newr = r + 0.02;
-							if (newr < 0.001) newr = 0.001;
-							if (newr > 1) newr = 1;
-							newrho[i] = newr;
-						});
+				//for (int i = 0; i < 8; i++) {
+				//	calboundary(rho, sens, boundary, i, fr);
+				//	float* grho = getMem().getBuffer("temp_rho0")->data<float>();
+				//	float* gsens = getMem().getBuffer("temp_rho1")->data<float>();
+				//	cudaMemcpy(grho, rho.data()+ i * blockne, blockne * sizeof(float), cudaMemcpyHostToDevice);
+				//	cudaMemcpy(gsens, sens.data()+ i * blockne, blockne * sizeof(float), cudaMemcpyHostToDevice);
+				//	oc.filterSens(gsens, grho, MIN_TRANSFER, ereso);
+				//	cudaMemcpy(sens.data() + i * blockne, gsens, blockne * sizeof(float), cudaMemcpyDeviceToHost);
+				//	reboundary(sens, boundary, i, fr);
+				//}
+				//std::vector<float> newrho = rho;
+				//float volratio = governor.get_volume_bound();
+				//float maxSens = abs(find_max_abs(sens));
+				//printf("max sens = %f\n", maxSens);
+				//float minSens = 0;
+				//for (int itn = 0; itn < 20; itn++) {
+				//	float gSens = (maxSens + minSens) / 2;
 
-					float curVol = std::transform_reduce(
-						std::execution::par_unseq,
-						newrho.begin(), newrho.end(),
-						0.0,
-						std::plus<double>(),
-						[](float x) { return x; }
-					) / ne;
-					printf("[OC] : g = %.4e   vol = %4.2f%% (Goal %4.2f%%)       \r", gSens, curVol * 100, volratio * 100);
-					if (curVol < volratio - 0.0001) {
-						maxSens = gSens;
-					}
-					else if (curVol > volratio + 0.0001) {
-						minSens = gSens;
-					}
-					else {
-						break;
-					}
-				}
-				printf("\n");
-				rho = newrho;
+				//	std::for_each(std::execution::par_unseq, newrho.begin(), newrho.end(),
+				//		[&](auto& nr) {
+				//			int i = &nr - &newrho[0];
+				//			float r = rho[i];
+				//			float B = -sens[i] / gSens;
+				//			if (B < 0) B = 0.01f;
+				//			float newr = sqrt(B) * r;
+				//			if (newr - r < -0.02) newr = r - 0.02;
+				//			if (newr - r > 0.02) newr = r + 0.02;
+				//			if (newr < 0.001) newr = 0.001;
+				//			if (newr > 1) newr = 1;
+				//			newrho[i] = newr;
+				//		});
 
-				//// GPU OC updation faster but memory comsume more
-				//int ereso[3] = { reso,reso,reso };
-				//std::vector<float> vectortemp(rho.size());
-				//block2lexi(rho, vectortemp, config);
-				//rho = vectortemp;
-				//block2lexi(sens, vectortemp, config);
-				//sens = vectortemp;
-				//auto tmpname = getMem().addBuffer(pow(reso, 3) * sizeof(float));
-				//float* gsens = getMem().getBuffer(tmpname)->data<float>();
-				//tmpname = getMem().addBuffer(pow(reso, 3) * sizeof(float));
-				//float* grho = getMem().getBuffer(tmpname)->data<float>();
-				//cudaMemcpy(grho, rho.data(), pow(reso, 3) * sizeof(float), cudaMemcpyHostToDevice);
-				//cudaMemcpy(gsens, sens.data(), pow(reso, 3) * sizeof(float), cudaMemcpyHostToDevice);
-				//oc.filterSens(gsens, grho, reso, ereso);
-				//oc.update(gsens, grho, governor.get_volume_bound());
-				//cudaMemcpy(rho.data(), grho, pow(reso, 3) * sizeof(float), cudaMemcpyDeviceToHost);
-				//lexi2block(rho, vectortemp, config);
-				//rho = vectortemp;
-				//getMem().deleteBuffer(gsens);
-				//getMem().deleteBuffer(grho);
+				//	float curVol = std::transform_reduce(
+				//		std::execution::par_unseq,
+				//		newrho.begin(), newrho.end(),
+				//		0.0,
+				//		std::plus<double>(),
+				//		[](float x) { return x; }
+				//	) / ne;
+				//	printf("[OC] : g = %.4e   vol = %4.2f%% (Goal %4.2f%%)       \r", gSens, curVol * 100, volratio * 100);
+				//	if (curVol < volratio - 0.0001) {
+				//		maxSens = gSens;
+				//	}
+				//	else if (curVol > volratio + 0.0001) {
+				//		minSens = gSens;
+				//	}
+				//	else {
+				//		break;
+				//	}
+				//}
+				//printf("\n");
+				//rho = newrho;
+
+				// GPU OC updation faster but memory comsume more
+				int ereso[3] = { reso,reso,reso };
+				std::vector<float> vectortemp(rho.size());
+				block2lexi(rho, vectortemp, config);
+				rho = vectortemp;
+				block2lexi(sens, vectortemp, config);
+				sens = vectortemp;
+				auto tmpname = getMem().addBuffer(pow(reso, 3) * sizeof(float));
+				float* gsens = getMem().getBuffer(tmpname)->data<float>();
+				tmpname = getMem().addBuffer(pow(reso, 3) * sizeof(float));
+				float* grho = getMem().getBuffer(tmpname)->data<float>();
+				cudaMemcpy(grho, rho.data(), pow(reso, 3) * sizeof(float), cudaMemcpyHostToDevice);
+				cudaMemcpy(gsens, sens.data(), pow(reso, 3) * sizeof(float), cudaMemcpyHostToDevice);
+				oc.filterSens(gsens, grho, reso, ereso);
+				oc.update(gsens, grho, governor.get_volume_bound());
+				cudaMemcpy(rho.data(), grho, pow(reso, 3) * sizeof(float), cudaMemcpyDeviceToHost);
+				lexi2block(rho, vectortemp, config);
+				rho = vectortemp;
+				getMem().deleteBuffer(gsens);
+				getMem().deleteBuffer(grho);
 
 				clock_t end = clock();
 				double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
@@ -389,7 +394,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			clock_t start = clock();
 			float final_val;
 			int itn;
-			for (itn = 0; itn < 1; itn++) {
+			for (itn = 0; itn < 500; itn++) {
 				float val = objective.eval();
 				final_val = val;
 				printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, governor.get_volume_bound());
@@ -410,7 +415,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				rho_H.value().graft(rhoarray.data());
 				clock_t end = clock();
 				double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
-				ofs << elapsed_time << " " << val + 0.01 << "\n";
+				std::cout << elapsed_time << " " << val + 0.01 << "\n";
 			}
 			// ofs << itn << "\n";
 			if (governor.best_res != 100000 && governor.best_res < final_val) {

@@ -72,18 +72,18 @@ void homo::MG_H::Grid0(int block_num) {
 	}
 }
 void homo::MG_H::gsGrid0(int block_num) {
-	grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->u_h, 0);
+	grids[0]->enforce_vertex_boundary_block(grids[0]->u_h, 0);
 	grids[0]->joint_vertex_boundary_block();
 	grids[0]->use_block_rhogs(0);
 	grids[0]->use_block_u_ggs(0);
 	grids[0]->use_block_f_ggs(0);
-	grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->u_h, 1);
+	grids[0]->enforce_vertex_boundary_block(grids[0]->u_h, 1);
 	for (int i = 0; i < block_num - 1; i++) {
 		// give in rho_g u_g
 		cudaDeviceSynchronize();
 		grids[0]->joint_vertex_boundary_block();
 		if (i + 2 < block_num) {
-			grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->u_h, i + 2);
+			grids[0]->enforce_vertex_boundary_block(grids[0]->u_h, i + 2);
 		}
 		if (i >= 1) {
 			grids[0]->write_block_u_ggs(i - 1);
@@ -116,9 +116,8 @@ void homo::MG_H::gsGrid0(int block_num) {
 	grids[0]->gs_relaxation_host(block_num - 1);
 	grids[0]->write_block_u_ggs(block_num - 1, false);
 	cudaDeviceSynchronize();
-	// caculate time and make full use of CPU
-	
-	// prepare for padding of block 0
+}
+void homo::MG_H::gsGrid1(int block_num) {
 	grids[0]->enforce_vertex_boundary_block_seperate_version(grids[0]->u_h, 0);
 	grids[0]->joint_vertex_boundary_block();
 	grids[0]->use_block_rhogs(0);
@@ -153,6 +152,7 @@ void homo::MG_H::gsGrid0(int block_num) {
 	}
 	cudaDeviceSynchronize();
 	grids[0]->write_block_r_ggs(block_num - 2);
+	float* tmp;
 	if (grids[0]->current) {
 		tmp = getMem().getBuffer("temp_rho0")->data<float>();
 	}
@@ -184,6 +184,7 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		grids[0]->useGrid_g();
 
 		gsGrid0(block_num);
+		gsGrid1(block_num);
 
 		double res = norm_host(grids[0]->r_h);
 		printf("residual is:%lf\n", res);
@@ -256,8 +257,9 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		grids[0]->write_block_u_ggs(block_num - 1, false);
 		cudaDeviceSynchronize();
 
-		//grids[0]->enforce_vertex_boundary(grids[0]->u_h);
+		// grids[0]->enforce_vertex_boundary(grids[0]->u_h);
 		gsGrid0(block_num);
+		gsGrid1(block_num);
 		grids[0]->enforce_vertex_boundary(grids[0]->r_h);
 	}
 	return;

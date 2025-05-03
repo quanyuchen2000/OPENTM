@@ -322,6 +322,8 @@ size_t Grid_H::allocateBuffer(int nv, int ne)
 	if (is_root && use_host_memory) {
 		getMem().addBuffer("temp_rho0", pow(MIN_TRANSFER + 2, 3) * sizeof(VT));
 		getMem().addBuffer("temp_rho1", pow(MIN_TRANSFER + 2, 3) * sizeof(VT));
+		getMem().addBuffer("filter_rho0", pow(MIN_TRANSFER + 4, 3) * sizeof(VT));
+		getMem().addBuffer("filter_rho1", pow(MIN_TRANSFER + 4, 3) * sizeof(VT));
 		total_gpu += 2 * pow(MIN_TRANSFER + 2, 3) * sizeof(VT);
 		stream.resize(2);
 		cudaStreamCreate(&stream[0]);
