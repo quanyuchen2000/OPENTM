@@ -43,6 +43,16 @@ void homo::MG_H::build(MGConfig config)
 		grids[i]->reset_force();
 	}
 }
+void homo::MG_H::unregist()
+{
+	for (int t = 0; t < 3; t++) {
+		cudaHostUnregister(grids[0]->uchar[t].data());
+	}
+	for (int i = 0; i < grids.size(); i++) {
+		cudaHostUnregister(grids[i]->f_h.data());
+		cudaHostUnregister(grids[i]->r_h.data());
+	}
+}
 void homo::MG_H::Grid0(int block_num) {
 	for (int i = 0; i < block_num; i++) {
 		// give in rho_g u_g
@@ -260,7 +270,7 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		grids[0]->write_block_u_ggs(block_num - 1, false);
 		cudaDeviceSynchronize();
 
-		grids[0]->enforce_vertex_boundary(grids[0]->u_h);
+		//grids[0]->enforce_vertex_boundary(grids[0]->u_h);
 		//Grid0(block_num);
 		gsGrid0(block_num);
 		gsGrid1(block_num);

@@ -34,6 +34,8 @@ struct MG_H {
 
 	void Grid0(int block_num);
 
+	void unregist();
+
 };
 }
 

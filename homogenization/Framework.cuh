@@ -344,13 +344,6 @@ public:
 
 struct VolumeGovernor {
 private:
-	float lowBound;
-	float volume_bound = 1.0;
-	float decrease = 0;
-	float decrease_factor = 1.;
-	float vibrate = 0;
-	int vibrate_count = 0;
-	int count = 0;
 	void shrink(float volfrac, float Hh[3][3], var_tsexp_t<>& rho_H, float val, bool record = 1) {
 		decrease = volume_bound - lowBound;
 		printf("decrease:%f\n factor:%f\n", decrease, decrease_factor);
@@ -397,6 +390,13 @@ public:
 	float best_vol = 1;
 	float val_last = 1;
 	float hh[3][3];
+	float lowBound;
+	float volume_bound = 1.0;
+	float decrease = 0;
+	float decrease_factor = 1.;
+	float vibrate = 0;
+	int vibrate_count = 0;
+	int count = 0;
 	float get_volume_bound() {
 		return volume_bound;
 	}
@@ -412,7 +412,7 @@ public:
 		if (itn == 100 && decrease_factor == 1) {
 			shrink(volfrac, Hh, rho_H, value);
 		}
-		bool reach = abs(volume_bound - volfrac) < 1e-2;
+		bool reach = abs(volume_bound - volfrac) < 1e-5;
 		// anti vibration
 		if (vibrate * (val_last - value) < 0)
 			vibrate_count++;

@@ -19,7 +19,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 64
+#define MIN_TRANSFER 256
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
 	using hvec3 = vec<3, half>;
@@ -126,6 +126,7 @@ struct Grid_H {
 		int block_numx = 2;
 		int block_numy = 2;
 		int block_numz = 2;
+		int tasknum;
 		std::vector<std::thread> workers;
 	}asp;
 	std::atomic<int> next_bid;

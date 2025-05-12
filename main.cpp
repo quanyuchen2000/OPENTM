@@ -159,7 +159,16 @@ int main()
 	//	std::cout << "\033[31m" << "Unhandled Exception occurred, aborting..." << "\033[0m" << std::endl;
 	//	exit(-1);
 	//}
-	runInstance(128, { 400, 0.17 }, {120,80,40,40,20,20}, cfg::InitWay::IWP, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, {120,80,40,0,0,0}, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,20,0,0 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,0,20,0 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,0,0,20 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,40,40,0 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 80,80,80,0,0,0 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,40,40,40 }, cfg::InitWay::manual, cfg::Model::oc);
+	runInstance(512, { 400, 0.17 }, { 120,80,40,90,60,40 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,10,0,0 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,40,20,20 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runbatch();
 	return 0;
 }

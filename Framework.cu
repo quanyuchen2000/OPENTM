@@ -7,6 +7,10 @@
 #include <thread>
 #include <execution>
 #include <numeric>
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <sstream>
 using namespace homo;
 using namespace culib;
 
@@ -155,12 +159,21 @@ void initDensity(var_tsexp_t<>& rho, cfg::HomoConfig config) {
 std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = nullptr) {
 	std::ofstream ofs;
 	int reso = config.reso[0];
-	std::string filename;
-	filename = config.testname;
-	filename.erase(std::remove(filename.begin(), filename.end(), '\t'), filename.end());
-	ofs.open("time512.txt", std::ios::app);
-	int ne = pow(reso, 3);
 	auto tt = config.target_tensor;
+	std::string filename;
+	filename = std::to_string(config.reso[0]) + "_";
+	for (int i = 0; i < 6; i++) {
+		filename += std::to_string(int(tt[i]));
+	}
+	std::string readname;
+	readname = std::to_string(256) + "_";
+	for (int i = 0; i < 6; i++) {
+		readname += std::to_string(int(tt[i]));
+	}
+	ofs.open(filename + ".txt", std::ios::app);
+	config.testname = readname;
+
+	int ne = pow(reso, 3);
 	Homogenization_H hom_H(config);
 	hom_H.ConfigDiagPrecondition(0);
 	int total_ne = (reso / MIN_TRANSFER * reso / MIN_TRANSFER * reso / MIN_TRANSFER) * pow(MIN_TRANSFER + 2, 3);
@@ -184,17 +197,33 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 
 		{
 			ConvergeChecker criteria(config.finthres);
-			OCOptimizer oc(reso * reso * reso, 0.001, 0.02, 0.5);
+			OCOptimizer oc(reso*reso*reso, 0.001, 0.02, 0.5);
 
 			VolumeGovernor governor;
+			std::ifstream file(readname + ".txt");
+			std::string line;
+			std::getline(file, line);
+			std::istringstream iss(line);
+			iss >> governor.volume_bound;
+			governor.volume_bound -= 0.01;
+			governor.decrease_factor = 0.8;
 			float final_val;
 			int itn;
 			clock_t start = clock();
-			for (itn = 0; itn < 200; itn++) {
+			for (itn = 0; itn < 600; itn++) {
 
 				caculate_rhop(rho, rhop, config);
 
 				update_density_boundary(rhop, config);
+				//// filter rho ?
+				//auto tmpname = getMem().addBuffer(pow(reso + 2, 3) * sizeof(float));
+				//float* grhop = getMem().getBuffer(tmpname)->data<float>();
+				//int rhopne = pow(reso + 2, 3);
+				//for (int i = 0; i < 8; i++) {
+				//	cudaMemcpy(grhop, rhop.data() + i * rhopne, rhopne * sizeof(float), cudaMemcpyHostToDevice);
+				//	cudaMemcpy(rhop.data() + i * rhopne, grhop, rhopne * sizeof(float), cudaMemcpyDeviceToHost);
+				//}
+				//update_density_boundary(rhop, config);
 
 				float val = objective.eval();
 
@@ -236,9 +265,10 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				//int ereso[3] = { MIN_TRANSFER,MIN_TRANSFER,MIN_TRANSFER };
 				//int fr = 2;
 				//std::vector<float> boundary(blockne - pow(MIN_TRANSFER - 2 * fr, 3));
-
 				//for (int i = 0; i < 8; i++) {
-				//	calboundary(rho, sens, boundary, i, fr);
+				//	std::vector<std::thread> workers;
+				//	std::atomic<int> counter(0);
+				//	calboundary(rho, sens, boundary, i, fr, workers, counter);
 				//	float* grho = getMem().getBuffer("temp_rho0")->data<float>();
 				//	float* gsens = getMem().getBuffer("temp_rho1")->data<float>();
 				//	cudaMemcpy(grho, rho.data()+ i * blockne, blockne * sizeof(float), cudaMemcpyHostToDevice);
@@ -254,7 +284,6 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				//float minSens = 0;
 				//for (int itn = 0; itn < 20; itn++) {
 				//	float gSens = (maxSens + minSens) / 2;
-
 				//	std::for_each(std::execution::par_unseq, newrho.begin(), newrho.end(),
 				//		[&](auto& nr) {
 				//			int i = &nr - &newrho[0];
@@ -268,7 +297,6 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				//			if (newr > 1) newr = 1;
 				//			newrho[i] = newr;
 				//		});
-
 				//	float curVol = std::transform_reduce(
 				//		std::execution::par_unseq,
 				//		newrho.begin(), newrho.end(),
@@ -313,7 +341,7 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 
 				clock_t end = clock();
 				double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
-				std::cout << elapsed_time << std::endl;
+				ofs << elapsed_time << " " << val << " " << volfrac << "\n";
 			}
 			// ofs << itn << "\n";
 			if (governor.best_res != 100000 && governor.best_res < final_val) {
@@ -333,8 +361,11 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 		int gsize[3] = { reso, reso, reso };
 		std::vector<float> vectorsave(rho.size());
 		block2lexi(rho, vectorsave, config);
-		openvdb_wrapper_t<float>::lexicalGrid2openVDBfile("128 block.vdb", gsize, vectorsave);
+		openvdb_wrapper_t<float>::lexicalGrid2openVDBfile( filename + ".vdb", gsize, vectorsave);
 		ofs.close();
+
+		//hom_H.mg_->unregist();
+		//cudaHostUnregister(rhop.data());
 	}
 	else {
 		var_tsexp_t<> rho_H(reso, reso, reso);
@@ -391,10 +422,12 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 		else if (config.model == cfg::Model::oc) {
 			OCOptimizer oc(ne, 0.001, 0.02, 0.5);
 			VolumeGovernor governor;
+			//governor.volume_bound = 0.444;
+			//governor.decrease_factor = 0.4096;
 			clock_t start = clock();
 			float final_val;
 			int itn;
-			for (itn = 0; itn < 500; itn++) {
+			for (itn = 0; itn < 300; itn++) {
 				float val = objective.eval();
 				final_val = val;
 				printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, governor.get_volume_bound());
@@ -413,25 +446,27 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				oc.filterSens(sens.data(), rhoarray.data(), reso, ereso);
 				oc.update(sens.data(), rhoarray.data(), governor.get_volume_bound());
 				rho_H.value().graft(rhoarray.data());
-				clock_t end = clock();
-				double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
-				std::cout << elapsed_time << " " << val + 0.01 << "\n";
 			}
+			clock_t end = clock();
+			double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
+			//ofs << elapsed_time << "\n";
 			// ofs << itn << "\n";
 			if (governor.best_res != 100000 && governor.best_res < final_val) {
-				ofs << governor.best_res << "\n";
-				ofs << governor.val_last << "\n";
-				ofs << governor.hh[0][0] << " " << governor.hh[1][1] << " " << governor.hh[2][2] << " " << governor.hh[0][1] << " " << governor.hh[1][2] << " " << governor.hh[0][2] << "\n";
-				ofs << governor.best_vol << "\n";
-				governor.best_rho.toVdb("nofilter256");
+				//ofs << governor.best_res << "\n";
+				//ofs << governor.val_last << "\n";
+				//ofs << governor.hh[0][0] << " " << governor.hh[1][1] << " " << governor.hh[2][2] << " " << governor.hh[0][1] << " " << governor.hh[1][2] << " " << governor.hh[0][2] << "\n";
+				//ofs << governor.best_vol << "\n";
+				governor.best_rho.toVdb(filename + ".vdb");
 			}
 			else {
-				ofs << final_val << "\n";
-				ofs << governor.val_last << "\n";
-				ofs << Hh.H_[0][0] << " " << Hh.H_[1][1] << " " << Hh.H_[2][2] << " " << Hh.H_[0][1] << " " << Hh.H_[1][2] << " " << Hh.H_[0][2] << "\n";
-				ofs << rho_H.sum().eval_imp() / pow(reso, 3) << "\n";
-				rho_H.value().toVdb("nofilter256");
+				//ofs << final_val << "\n";
+				//ofs << governor.val_last << "\n";
+				//ofs << Hh.H_[0][0] << " " << Hh.H_[1][1] << " " << Hh.H_[2][2] << " " << Hh.H_[0][1] << " " << Hh.H_[1][2] << " " << Hh.H_[0][2] << "\n";
+				//ofs << rho_H.sum().eval_imp() / pow(reso, 3) << "\n";
+				rho_H.value().toVdb(filename + ".vdb");
 			}
+			ofs << governor.volume_bound << "\n";
+			ofs << governor.decrease_factor << "\n";
 			ofs.close();
 		}
 		else if (config.model == cfg::Model::moo) {
