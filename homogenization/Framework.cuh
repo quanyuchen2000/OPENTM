@@ -8,7 +8,8 @@
 #include "optimization/mmaOptimizer.h"
 #include <glm/glm.hpp>
 #include <glm/gtx/quaternion.hpp>
-
+#include "voxelIO/openvdb_wrapper_t.h"
+#include "homogenization/cpuFramework.h"
 using namespace homo;
 using namespace culib;
 
@@ -361,8 +362,14 @@ private:
 		}
 		if (decrease_factor > 0.1)
 			decrease_factor *= 0.8;
+		best_val = 100000;
 	}
 	void shrink(float volfrac, float Hh[3][3], std::vector<float> &rho_H, float val, bool record = 1) {
+		int gsize[3] = { 512, 512, 512 };
+		std::vector<float> vectorsave(rho_H.size());
+		block2lexi(rho_H, vectorsave, 512);
+		openvdb_wrapper_t<float>::lexicalGrid2openVDBfile(std::to_string(decrease_factor) + ".vdb", gsize, vectorsave);
+
 		decrease = volume_bound - lowBound;
 		printf("decrease:%f\n factor:%f\n", decrease, decrease_factor);
 
@@ -379,6 +386,7 @@ private:
 		}
 		if (decrease_factor > 0.1)
 			decrease_factor *= 0.8;
+		best_val = 100000;
 	}
 	void expand() {
 		volume_bound += 0.3 * decrease * decrease_factor;
@@ -389,6 +397,8 @@ public:
 	float best_res = 100000;
 	float best_vol = 1;
 	float val_last = 1;
+	float best_val = 100000;
+	float volume_last = 0;
 	float hh[3][3];
 	float lowBound;
 	float volume_bound = 1.0;
@@ -403,38 +413,59 @@ public:
 	int volume_check(float value, float _lowBound, float volfrac, int itn, std::vector<float>& rho_H, float Hh[3][3]) {
 		lowBound = _lowBound;
 		// enough small or give a start power
-		if (value + 0.01 < 0.02) {
+		if (value < 1.0) {
+			std::cout << "occur first" << std::endl;
 			shrink(volfrac, Hh, rho_H, value);
+			return 0;
 			if (decrease_factor <= 0.1)
 				return 1;
 			count = 0;
 		}
 		if (itn == 100 && decrease_factor == 1) {
 			shrink(volfrac, Hh, rho_H, value);
+			return 0;
 		}
-		bool reach = abs(volume_bound - volfrac) < 1e-5;
-		// anti vibration
-		if (vibrate * (val_last - value) < 0)
+		// if vibration and smaller volume fraction makes better shrink
+		if ((val_last - value) * (volume_last - volfrac) < 0 && abs(volume_last - volfrac) > 0.0001) {
 			vibrate_count++;
-		else
-			vibrate_count = 0;
-		if (vibrate_count >= 8) {
-			if (reach) {
-				expand();
-				vibrate_count = 0;
-				count = 0;
-			}
-			else {
-				shrink(volfrac, Hh, rho_H, value, false);
-				if (decrease_factor <= 0.1)
-					return 1;
-				vibrate_count = 0;
-				count = 0;
-			}
 		}
-		vibrate = val_last - value;
+		else {
+			vibrate_count = 0;
+		}
+		printf("val_last - val:%f\n", val_last - value);
+		printf("frac_last - frac:%f\n", volume_last - volfrac);
+		volume_last = volfrac;
+		printf("vibrate_count:%d\n", vibrate_count);
+		if (vibrate_count >= 10) {
+			shrink(volfrac, Hh, rho_H, value);
+			vibrate_count = 0;
+			return 0;
+		}
+		bool reach = volume_bound - volfrac < 5e-3;
+		//// anti vibration
+		//if (vibrate * (val_last - value) < 0)
+		//	vibrate_count++;
+		//else
+		//	vibrate_count = 0;
+		//if (vibrate_count >= 8) {
+		//	if (reach) {
+		//		expand();
+		//		vibrate_count = 0;
+		//		count = 0;
+		//	}
+		//	else {
+		//		shrink(volfrac, Hh, rho_H, value, false);
+		//		if (decrease_factor <= 0.1)
+		//			return 1;
+		//		vibrate_count = 0;
+		//		count = 0;
+		//	}
+		//}
+		//vibrate = val_last - value;
+		printf("cond1: %f, cond2: %f, cond3: %d\n", (best_val - value) / abs(value + 0.02), value, reach);
 		// progress little & number big & reach bound
-		if ((val_last - value) / abs(value + 0.02) < 0.01 && value > 0.01 && reach) {
+		if ((best_val - value) / abs(value + 0.02) < 0.01 && value > 1.0 && reach) {
+			printf("count: %d\n", count);
 			count++;
 		}
 		else {
@@ -446,12 +477,15 @@ public:
 			count = 0;
 		}
 		val_last = value;
+		if (value < best_val) {
+			best_val = value;
+		}
 		return 0;
 	}
 	int volume_check(float value, float _lowBound, float volfrac, int itn, var_tsexp_t<> &rho_H, float Hh[3][3]) {
 		lowBound = _lowBound;
 		// enough small or give a start power
-		if (value + 0.01 < 0.02) {
+		if (value + 0.01 < 1.0) {
 			shrink(volfrac, Hh, rho_H, value);
 			if (decrease_factor <= 0.1)
 				return 1;
@@ -460,29 +494,46 @@ public:
 		if (itn == 100 && decrease_factor == 1) {
 			shrink(volfrac, Hh, rho_H, value);
 		}
-		bool reach = abs(volume_bound - volfrac) < 1e-2;
-		// anti vibration
-		if (vibrate * (val_last - value) < 0)
-			vibrate_count++;
-		else
-			vibrate_count = 0;
-		if (vibrate_count >= 8) {
-			if (reach) {
-				expand();
-				vibrate_count = 0;
-				count = 0;
+		// if vibration and smaller volume fraction makes better shrink
+			if ((val_last - value) * (volume_last - volfrac) < 0 && abs(volume_last - volfrac) > 0.0001) {
+				vibrate_count++;
 			}
 			else {
-				shrink(volfrac, Hh, rho_H, value, false);
-				if (decrease_factor <= 0.1)
-					return 1;
 				vibrate_count = 0;
-				count = 0;
 			}
+		printf("val_last - val:%f\n", val_last - value);
+		printf("frac_last - frac:%f\n", volume_last - volfrac);
+		volume_last = volfrac;
+		printf("vibrate_count:%d\n", vibrate_count);
+		if (vibrate_count >= 10) {
+			shrink(volfrac, Hh, rho_H, value);
+			vibrate_count = 0;
 		}
-		vibrate = val_last - value;
+		bool reach = volume_bound - volfrac < 5e-3;
+		//// anti vibration
+		//if (vibrate * (val_last - value) < 0)
+		//	vibrate_count++;
+		//else
+		//	vibrate_count = 0;
+		//if (vibrate_count >= 8) {
+		//	if (reach) {
+		//		expand();
+		//		vibrate_count = 0;
+		//		count = 0;
+		//	}
+		//	else {
+		//		shrink(volfrac, Hh, rho_H, value, false);
+		//		if (decrease_factor <= 0.1)
+		//			return 1;
+		//		vibrate_count = 0;
+		//		count = 0;
+		//	}
+		//}
+		//vibrate = val_last - value;
 		// progress little & number big & reach bound
-		if ((val_last - value)/abs(value+0.02) < 0.01 && value > 0.01 && reach) {
+		printf("cond1: %f, cond2: %f, cond3: %d\n", (best_val - value) / abs(value + 0.01), value, reach);
+		if ((best_val - value)/abs(value+0.01) < 0.01 && value > 1.0 && reach) {
+			printf("count: %d\n", count);
 			count++;
 		}
 		else {
@@ -494,6 +545,9 @@ public:
 			count = 0;
 		}
 		val_last = value;
+		if (value < best_val) {
+			best_val = value;
+		}
 		return 0;
 	};
 	float get_current_decrease() {

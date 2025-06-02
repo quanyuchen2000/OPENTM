@@ -77,7 +77,16 @@ void initDensity(var_tsexp_t<>& rho, cfg::HomoConfig config) {
 	if (config.winit == cfg::InitWay::random || config.winit == cfg::InitWay::randcenter) {
 		randTri(rho.value(), config);
 	} else if (config.winit == cfg::InitWay::manual) {
-		rho.value().fromVdb(config.inputrho, false);
+		rho.value().fromVdb("64_1208040404040.vdb", false);
+		std::vector<float> hostvec(64 * 64 * 64);
+		rho.value().toHost(hostvec);
+		std::vector<int> res(11, 0);
+		for (int i = 0; i < 64 * 64 * 64; i++) {
+			res[int(hostvec[i] * 10)]++;
+		}
+		for (auto i : res) {
+			std::cout << i << std::endl;
+		}
 	} else if (config.winit == cfg::InitWay::interp) {
 		rho.value().fromVdb(config.inputrho, true);
 	} else if (config.winit == cfg::InitWay::rep_randcenter) {
@@ -152,7 +161,7 @@ void initDensity(var_tsexp_t<>& rho, cfg::HomoConfig config) {
 	symmetrizeField(rho.value(), config.sym);
 
 	// clamp density value to [rho_min, 1]
-	// rho.value().clamp(0.001, 1);
+	rho.value().clamp(0.0001, 1);
 }
 
 
@@ -197,8 +206,9 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 
 		{
 			ConvergeChecker criteria(config.finthres);
-			OCOptimizer oc(reso*reso*reso, 0.001, 0.02, 0.5);
-
+			
+			OCOptimizer oc(reso * reso * reso, 0.001, 0.02, 0.5);
+			//OCOptimizer oc(MIN_TRANSFER * MIN_TRANSFER * MIN_TRANSFER, 0.001, 0.02, 0.5);
 			VolumeGovernor governor;
 			std::ifstream file(readname + ".txt");
 			std::string line;
@@ -207,23 +217,15 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			iss >> governor.volume_bound;
 			governor.volume_bound -= 0.01;
 			governor.decrease_factor = 0.8;
+			governor.decrease = 0.04;
 			float final_val;
 			int itn;
 			clock_t start = clock();
-			for (itn = 0; itn < 600; itn++) {
+			for (itn = 0; itn < 200; itn++) {
 
 				caculate_rhop(rho, rhop, config);
 
 				update_density_boundary(rhop, config);
-				//// filter rho ?
-				//auto tmpname = getMem().addBuffer(pow(reso + 2, 3) * sizeof(float));
-				//float* grhop = getMem().getBuffer(tmpname)->data<float>();
-				//int rhopne = pow(reso + 2, 3);
-				//for (int i = 0; i < 8; i++) {
-				//	cudaMemcpy(grhop, rhop.data() + i * rhopne, rhopne * sizeof(float), cudaMemcpyHostToDevice);
-				//	cudaMemcpy(rhop.data() + i * rhopne, grhop, rhopne * sizeof(float), cudaMemcpyDeviceToHost);
-				//}
-				//update_density_boundary(rhop, config);
 
 				float val = objective.eval();
 
@@ -321,9 +323,9 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				// GPU OC updation faster but memory comsume more
 				int ereso[3] = { reso,reso,reso };
 				std::vector<float> vectortemp(rho.size());
-				block2lexi(rho, vectortemp, config);
+				block2lexi(rho, vectortemp, config.reso[0]);
 				rho = vectortemp;
-				block2lexi(sens, vectortemp, config);
+				block2lexi(sens, vectortemp, config.reso[0]);
 				sens = vectortemp;
 				auto tmpname = getMem().addBuffer(pow(reso, 3) * sizeof(float));
 				float* gsens = getMem().getBuffer(tmpname)->data<float>();
@@ -331,8 +333,8 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				float* grho = getMem().getBuffer(tmpname)->data<float>();
 				cudaMemcpy(grho, rho.data(), pow(reso, 3) * sizeof(float), cudaMemcpyHostToDevice);
 				cudaMemcpy(gsens, sens.data(), pow(reso, 3) * sizeof(float), cudaMemcpyHostToDevice);
-				oc.filterSens(gsens, grho, reso, ereso);
-				oc.update(gsens, grho, governor.get_volume_bound());
+				oc.filterSens(gsens, grho, reso, ereso)
+					;				oc.update(gsens, grho, governor.get_volume_bound());
 				cudaMemcpy(rho.data(), grho, pow(reso, 3) * sizeof(float), cudaMemcpyDeviceToHost);
 				lexi2block(rho, vectortemp, config);
 				rho = vectortemp;
@@ -341,10 +343,10 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 
 				clock_t end = clock();
 				double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
-				ofs << elapsed_time << " " << val << " " << volfrac << "\n";
+				ofs << elapsed_time << " " << val << " " << volfrac << " " << governor.volume_bound << " " << governor.decrease_factor << std::endl;
 			}
 			// ofs << itn << "\n";
-			if (governor.best_res != 100000 && governor.best_res < final_val) {
+			if (governor.best_res != 100000 && governor.best_res < final_val && false) {
 				ofs << governor.best_res << "\n";
 				ofs << governor.val_last << "\n";
 				ofs << governor.hh[0][0] << " " << governor.hh[1][1] << " " << governor.hh[2][2] << " " << governor.hh[0][1] << " " << governor.hh[1][2] << " " << governor.hh[0][2] << "\n";
@@ -352,15 +354,15 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 				rho = governor.best_rho_h;
 			}
 			else {
+				ofs << governor.best_res << "\n";
 				ofs << final_val << "\n";
-				ofs << governor.val_last << "\n";
 				ofs << Hh.H_[0][0] << " " << Hh.H_[1][1] << " " << Hh.H_[2][2] << " " << Hh.H_[0][1] << " " << Hh.H_[1][2] << " " << Hh.H_[0][2] << "\n";
 			}
 		}
 
 		int gsize[3] = { reso, reso, reso };
 		std::vector<float> vectorsave(rho.size());
-		block2lexi(rho, vectorsave, config);
+		block2lexi(rho, vectorsave, config.reso[0]);
 		openvdb_wrapper_t<float>::lexicalGrid2openVDBfile( filename + ".vdb", gsize, vectorsave);
 		ofs.close();
 
@@ -427,21 +429,25 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			clock_t start = clock();
 			float final_val;
 			int itn;
-			for (itn = 0; itn < 300; itn++) {
+			for (itn = 0; itn < 800; itn++) {
 				float val = objective.eval();
 				final_val = val;
 				printf("\033[32m\n * Iter %d   obj = %.4e  vb = %.4e\033[0m\n", itn, val, governor.get_volume_bound());
 				printf("%f %f %f %f %f %f", Hh.H_[0][0], Hh.H_[1][1], Hh.H_[2][2], Hh.H_[0][1], Hh.H_[1][2], Hh.H_[0][2]);
 				float lowerBound = rho_H.pow(3).sum().eval_imp() / pow(reso, 3);
 				float volfrac = rho_H.sum().eval_imp() / pow(reso, 3);
-				auto it = governor.volume_check(val, lowerBound, volfrac, itn, rho_H, Hh.H_);
-				if (it) {
-					printf("converged"); break;
+				if (itn >= 60) {
+					auto it = governor.volume_check(val, lowerBound, volfrac, itn, rho_H, Hh.H_);
+					if (it) {
+						printf("converged"); break;
+					}
 				}
 				objective.backward(1);
 				if (criteria.is_converge(itn, val) && governor.get_current_decrease() < 1e-2) { printf("converged\n"); break; }
 				auto sens = rho_H.diff().flatten();
 				auto rhoarray = rho_H.value().flatten();
+				//symmetrizeField(rho_H.value(), config.sym);
+				//symmetrizeField(sens.value(), config.sym);
 				int ereso[3] = { reso,reso,reso };
 				oc.filterSens(sens.data(), rhoarray.data(), reso, ereso);
 				oc.update(sens.data(), rhoarray.data(), governor.get_volume_bound());
@@ -449,20 +455,21 @@ std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = 
 			}
 			clock_t end = clock();
 			double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
-			//ofs << elapsed_time << "\n";
-			// ofs << itn << "\n";
+			std::cout << "use time:" << elapsed_time << std::endl;
+			ofs << elapsed_time << "\n";
+			ofs << itn << "\n";
 			if (governor.best_res != 100000 && governor.best_res < final_val) {
-				//ofs << governor.best_res << "\n";
-				//ofs << governor.val_last << "\n";
-				//ofs << governor.hh[0][0] << " " << governor.hh[1][1] << " " << governor.hh[2][2] << " " << governor.hh[0][1] << " " << governor.hh[1][2] << " " << governor.hh[0][2] << "\n";
-				//ofs << governor.best_vol << "\n";
+				ofs << governor.best_res << "\n";
+				ofs << governor.val_last << "\n";
+				ofs << governor.hh[0][0] << " " << governor.hh[1][1] << " " << governor.hh[2][2] << " " << governor.hh[0][1] << " " << governor.hh[1][2] << " " << governor.hh[0][2] << "\n";
+				ofs << governor.best_vol << "\n";
 				governor.best_rho.toVdb(filename + ".vdb");
 			}
 			else {
-				//ofs << final_val << "\n";
-				//ofs << governor.val_last << "\n";
-				//ofs << Hh.H_[0][0] << " " << Hh.H_[1][1] << " " << Hh.H_[2][2] << " " << Hh.H_[0][1] << " " << Hh.H_[1][2] << " " << Hh.H_[0][2] << "\n";
-				//ofs << rho_H.sum().eval_imp() / pow(reso, 3) << "\n";
+				ofs << final_val << "\n";
+				ofs << governor.val_last << "\n";
+				ofs << Hh.H_[0][0] << " " << Hh.H_[1][1] << " " << Hh.H_[2][2] << " " << Hh.H_[0][1] << " " << Hh.H_[1][2] << " " << Hh.H_[0][2] << "\n";
+				ofs << rho_H.sum().eval_imp() / pow(reso, 3) << "\n";
 				rho_H.value().toVdb(filename + ".vdb");
 			}
 			ofs << governor.volume_bound << "\n";

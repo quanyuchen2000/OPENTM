@@ -40,12 +40,17 @@ void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
 		printf(" reso = (%d, %d, %d)\n", reso[0], reso[1], reso[2]);
 		int ne = reso[0] * reso[1] * reso[2];
 		std::vector<float> newvalues(ne, 0);
+		//std::vector<int> sta(11, 0);
 		for (int i = 0; i < value.size(); i++) {
 			int p[3] = { pos[0][i] - origin[0], pos[1][i] - origin[1], pos[2][i] - origin[2] };
 			int lexid = p[0] + p[1] * reso[0] + p[2] * reso[0] * reso[1];
 			newvalues[lexid] = value[i];
+			//sta[int(value[i] * 10)]++;
 		}
-
+		//for (int i = 0; i < 11; i++) {
+		//	std::cout << sta[i] << std::endl;
+		//}
+		//exit(0);
 		const int block_numx = resox / MIN_TRANSFER;
 		const int block_numy = resoy / MIN_TRANSFER;
 		const int block_numz = resoz / MIN_TRANSFER;
@@ -54,14 +59,12 @@ void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
 		int ratio = config.reso[0] / reso[0];
 		const unsigned int num_threads = std::thread::hardware_concurrency();
 		std::vector<std::thread> workers;
-
 		auto thread_task = [&](int start_id, int end_id) {
 			for (int block_id = start_id; block_id < end_id; ++block_id) {
 				const int off_set = block_len * block_id;
 				const int off_setx = block_id % block_numx;
 				const int off_sety = (block_id / block_numx) % block_numy;
 				const int off_setz = block_id / (block_numx * block_numy);
-
 				for (int k = 0; k < MIN_TRANSFER; ++k) {
 					for (int j = 0; j < MIN_TRANSFER; ++j) {
 						for (int i = 0; i < MIN_TRANSFER; ++i) {
@@ -70,7 +73,6 @@ void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
 							const int zc = (k + off_setz * MIN_TRANSFER)/ratio;
 							float filtered_val = 0.0f;
 							float total_weight = 0.0f;
-
 							for (int dz : { -1, 0, 1}) {
 								for (int dy : {-1, 0, 1}) {
 									for (int dx : {-1, 0, 1}) {
@@ -94,20 +96,38 @@ void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
 				}
 			}
 			};
-
 		const int blocks_per_thread = block_num / num_threads;
 		int remaining_blocks = block_num % num_threads;
 		int start_id = 0;
-
 		for (unsigned int t = 0; t < num_threads; ++t) {
 			int end_id = start_id + blocks_per_thread + (t < remaining_blocks ? 1 : 0);
 			workers.emplace_back(thread_task, start_id, end_id);
 			start_id = end_id;
 		}
-
 		for (auto& th : workers) {
 			if (th.joinable()) th.join();
 		}
+
+		//std::string fname = "512_1208040404040.vdb";
+		//printf("reading density %s...", fname.c_str());
+		//std::vector<int> pos[3];
+		//std::vector<float> value;
+		//openvdb_wrapper_t<float>::openVDBfile2grid(fname, pos, value);
+		//int origin[3];
+		//int reso[3];
+		//for (int j = 0; j < 3; j++) {
+		//	origin[j] = *std::min_element(pos[j].begin(), pos[j].end());
+		//	reso[j] = 1 + *std::max_element(pos[j].begin(), pos[j].end()) - origin[j];
+		//}
+		//printf(" reso = (%d, %d, %d)\n", reso[0], reso[1], reso[2]);
+		//int ne = reso[0] * reso[1] * reso[2];
+		//std::vector<float> newvalues(ne, 0);
+		//for (int i = 0; i < value.size(); i++) {
+		//	int p[3] = { pos[0][i] - origin[0], pos[1][i] - origin[1], pos[2][i] - origin[2] };
+		//	int lexid = p[0] + p[1] * reso[0] + p[2] * reso[0] * reso[1];
+		//	newvalues[lexid] = value[i] < 0.8 ? 0.0001:1;
+		//}
+		//lexi2block(newvalues, rho, config);
 	}
 	else {
 		const int block_numx = resox / MIN_TRANSFER;
@@ -852,10 +872,10 @@ double norm_host(std::vector<float>& A) {
 	);
 	return std::sqrt(sum);
 }
-void block2lexi(std::vector<float>& rho, std::vector<float>& lexirho, cfg::HomoConfig config) {
-	int resox = config.reso[0];
-	int resoy = config.reso[1];
-	int resoz = config.reso[2];
+void block2lexi(std::vector<float>& rho, std::vector<float>& lexirho, int reso) {
+	int resox = reso;
+	int resoy = reso;
+	int resoz = reso;
 	int off_set = 0;
 	// for each block init block
 	int block_numx = (resox / MIN_TRANSFER);
@@ -916,39 +936,6 @@ void lexi2block(std::vector<float>& lexirho, std::vector<float>& rho, cfg::HomoC
 	int block_numz = resoz / MIN_TRANSFER;
 	int block_num = block_numx * block_numy * block_numz;
 	int block_len = pow(MIN_TRANSFER, 3);
-
-	//const unsigned num_thread = std::max(4u, std::thread::hardware_concurrency());
-	//std::vector<std::thread> workers;
-	//std::atomic<int> counter(0);
-	//const int tsknum = block_num;
-	//for (unsigned t = 0; t < num_thread; ++t) {
-	//	workers.emplace_back([&]() {
-	//		while (true) {
-	//			const int block_id = counter.fetch_add(1, std::memory_order_relaxed);
-	//			if (block_id >= tsknum) break;
-	//			off_set = block_len * block_id;
-	//			int off_setx = block_id % block_numx;
-	//			int off_sety = (block_id / block_numx) % block_numy;
-	//			int off_setz = block_id / (block_numx * block_numy);
-	//			for (int k = 0; k < MIN_TRANSFER; k++) {
-	//				for (int j = 0; j < MIN_TRANSFER; j++) {
-	//					for (int i = 0; i < MIN_TRANSFER; i++) {
-	//						int x = i + off_setx * MIN_TRANSFER;
-	//						int y = j + off_sety * MIN_TRANSFER;
-	//						int z = k + off_setz * MIN_TRANSFER;
-	//						int idlexi = x + (y + z * resoy) * resox;
-	//						int id = off_set + k * MIN_TRANSFER * MIN_TRANSFER
-	//							+ j * MIN_TRANSFER + i;
-	//						rho[id] = lexirho[idlexi];
-	//					}
-	//				}
-	//			}
-	//		}
-	//		});
-	//}
-	//for (auto& t : workers) {
-	//	if (t.joinable()) t.join();
-	//}
 
 	for (int block_id = 0; block_id < block_num; block_id++) {
 		off_set = block_len * block_id;

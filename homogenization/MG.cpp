@@ -307,7 +307,7 @@ double homo::MG_H::solveEquation(double tol /*= 1e-2*/, bool with_guess /*= true
 	bool enable_translate_displacement = false;
 	std::vector<double> errlist;
 	double uch = 1e-7;
-	while ((rel_res > 1e-2 || uch > 1e-6) && iter++ < 200) {
+	while ((rel_res > 1e-2 || uch > 1e-6) && iter++ < 20) {
 		v_cycle(1);
 #else
 		while (1) {

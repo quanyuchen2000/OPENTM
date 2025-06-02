@@ -160,15 +160,27 @@ int main()
 	//	exit(-1);
 	//}
 	//runInstance(512, { 400, 0.17 }, {120,80,40,0,0,0}, cfg::InitWay::manual, cfg::Model::oc);
-	//runInstance(512, { 400, 0.17 }, { 120,80,40,20,0,0 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(1024, { 400, 0.17 }, { 120,80,40,20,0,0 }, cfg::InitWay::manual, cfg::Model::oc);
 	//runInstance(512, { 400, 0.17 }, { 120,80,40,0,20,0 }, cfg::InitWay::manual, cfg::Model::oc);
 	//runInstance(512, { 400, 0.17 }, { 120,80,40,0,0,20 }, cfg::InitWay::manual, cfg::Model::oc);
 	//runInstance(512, { 400, 0.17 }, { 120,80,40,40,40,0 }, cfg::InitWay::manual, cfg::Model::oc);
-	//runInstance(512, { 400, 0.17 }, { 80,80,80,0,0,0 }, cfg::InitWay::manual, cfg::Model::oc);
-	//runInstance(512, { 400, 0.17 }, { 120,80,40,40,40,40 }, cfg::InitWay::manual, cfg::Model::oc);
-	runInstance(512, { 400, 0.17 }, { 120,80,40,90,60,40 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 80,80,80,0,0,0 }, cfg::InitWay::manual, cf
+	// g::Model::oc);
+	//runInstance(512, { 400, 0.17 }, { 120,80,40,90,60,40 }, cfg::InitWay::manual, cfg::Model::oc);
 	//runInstance(512, { 400, 0.17 }, { 120,80,40,10,0,0 }, cfg::InitWay::manual, cfg::Model::oc);
-	//runInstance(512, { 400, 0.17 }, { 120,80,40,40,20,20 }, cfg::InitWay::manual, cfg::Model::oc);
+	//runInstance(64, { 400, 0.17 }, { 120,80,40,40,40,40 }, cfg::InitWay::IWP, cfg::Model::oc);
+
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 70.0, 0, 48 }, cfg::InitWay::IWP, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 96.7, 28.8,25 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 16, 11.5, 69 }, cfg::InitWay::manual, cfg::Model::oc);
+	runInstance(512, { 400, 0.17 }, { 120,80,40, 80, 56, 52 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 62, 43, 0 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 0, 32, 56 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 2, 56, 1.4 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, sqrt(120*80), 0, 0 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 0, sqrt(80*40), 0 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 0, 0, sqrt(120*40) }, cfg::InitWay::manual, cfg::Model::oc);
+	// xzy!!
 	// runbatch();
 	return 0;
 }

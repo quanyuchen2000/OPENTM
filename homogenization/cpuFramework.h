@@ -13,6 +13,6 @@ void subtract_mean_parallel(std::vector<float>& A);
 void calboundary(std::vector<float>& rho, std::vector<float>& sens, std::vector<float>& boundary, int blockid, int filter_radius, std::vector<std::thread>& workers, std::atomic<int>& counter);
 void reboundary(std::vector<float>& sens, std::vector<float>& boundary, int blockid, int fr);
 double norm_host(std::vector<float>& A);
-void block2lexi(std::vector<float>& rho, std::vector<float>& lexirho, cfg::HomoConfig config);
+void block2lexi(std::vector<float>& rho, std::vector<float>& lexirho, int reso);
 void lexi2block(std::vector<float>& lexirho, std::vector<float>& rho, cfg::HomoConfig config);
 float find_max_abs(const std::vector<float>& sens);
