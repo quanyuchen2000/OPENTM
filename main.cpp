@@ -173,7 +173,7 @@ int main()
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 70.0, 0, 48 }, cfg::InitWay::IWP, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 96.7, 28.8,25 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 16, 11.5, 69 }, cfg::InitWay::manual, cfg::Model::oc);
-	runInstance(512, { 400, 0.17 }, { 120,80,40, 80, 56, 52 }, cfg::InitWay::manual, cfg::Model::oc);
+	runInstance(256, { 400, 0.17 }, { 120,80,40, 80, 56, 52 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 62, 43, 0 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 0, 32, 56 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 2, 56, 1.4 }, cfg::InitWay::manual, cfg::Model::oc);
