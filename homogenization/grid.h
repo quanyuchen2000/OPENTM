@@ -19,7 +19,7 @@
 #include <Eigen/IterativeLinearSolvers>
 #include "glm/glm.hpp"
 #include "cuda_fp16.h"
-#define MIN_TRANSFER 512
+#define MIN_TRANSFER 256
 namespace glm {
 	using hmat3 = mat<3, 3, half>;
 	using hvec3 = vec<3, half>;
@@ -297,6 +297,7 @@ struct Grid_H {
 
 	void enforce_unit_macro_strain(int istrain);
 
+	void enforce_unit_macro_strain_host();
 	void enforce_unit_macro_strain_host(int istrain);
 
 	void lexiufile(int direct);
@@ -315,8 +316,10 @@ struct Grid_H {
 
 	////void setFchar(int k, double** f);
 
+	void useF();
 	void useFchar(int k);
 
+	void useU();
 	void useUchar(int k);
 
 	void setUchar(int k, VT* uchar);

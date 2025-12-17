@@ -314,7 +314,16 @@ __global__ void fillTotalVertices_kernel_host_H(
 		}
 	}
 }
+void homo::Homogenization_H::simulate() {
+	mg_->reset_displacement();
+	grid->useF();
 
+	grid->u_h = std::move(grid->uchar[0]);
+	grid->useU();
+
+	mg_->solveEquation(config.femRelThres);
+
+}
 void homo::Homogenization_H::heatMatrix(double C[3][3]) {
 	mg_->reset_displacement();
 	for (int i = 0; i < 3; i++) {

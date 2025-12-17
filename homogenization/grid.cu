@@ -1824,6 +1824,10 @@ __global__ void enforce_unit_macro_strain_kernel_H(
 	fcharlist[0][vid] = fchar;
 }
 
+void homo::Grid_H::enforce_unit_macro_strain_host()
+{
+	f_h.assign(f_h.size(), 0);
+}
 void homo::Grid_H::enforce_unit_macro_strain_host(int istrain)
 {
 	useGrid_g();

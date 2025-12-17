@@ -17,6 +17,7 @@ namespace homo {
 		void build(cfg::HomoConfig config);
 		void update(float* rho = nullptr, int pitchT = -1);
 		void update_Host(std::vector<float> &rho);
+		void simulate();
 		void heatMatrix(double C[3][3]);
 		void heatMatrix(float C[3][3]);
 		std::shared_ptr<Grid_H> grid;

@@ -10,6 +10,7 @@ extern void cuda_test(void);
 extern void testAutoDiff(void);
 extern void test_MMA(cfg::HomoConfig, int mode);
 extern std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float>* rho0 = nullptr);
+extern void runSimulate();
 namespace homo {
 	extern std::string setPathPrefix(const std::string& fprefix);
 }
@@ -173,7 +174,7 @@ int main()
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 70.0, 0, 48 }, cfg::InitWay::IWP, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 96.7, 28.8,25 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 16, 11.5, 69 }, cfg::InitWay::manual, cfg::Model::oc);
-	runInstance(256, { 400, 0.17 }, { 120,80,40, 80, 56, 52 }, cfg::InitWay::manual, cfg::Model::oc);
+	// runInstance(512, { 400, 0.17 }, { 120,80,40, 40, 20, 20 }, cfg::InitWay::IWP, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 62, 43, 0 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 0, 32, 56 }, cfg::InitWay::manual, cfg::Model::oc);
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 2, 56, 1.4 }, cfg::InitWay::manual, cfg::Model::oc);
@@ -182,7 +183,8 @@ int main()
 	// runInstance(512, { 400, 0.17 }, { 120,80,40, 0, 0, sqrt(120*40) }, cfg::InitWay::manual, cfg::Model::oc);
 	// xzy!!
 	// runbatch();
-	return 0;
+	runSimulate();
+	return 0;  
 }
 
 /* below is the code for user to bind python .pyd file*/

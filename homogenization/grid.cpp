@@ -433,6 +433,10 @@ void Grid_H::lexiufile(int direct) {
 	fout << "\n";
 	fout.close();
 }
+void Grid_H::useF() {
+	enforce_unit_macro_strain_host();
+}
+
 void Grid_H::useFchar(int k)
 {
 	useGrid_g();
