@@ -171,6 +171,7 @@ void runSimulate() {
 	config.reso[0] = reso;
 	config.reso[1] = reso;
 	config.reso[2] = reso;
+	config.winit = cfg::InitWay::IWP;
 	int ne = pow(reso, 3);
 	Homogenization_H hom_H(config);
 	hom_H.ConfigDiagPrecondition(0);
@@ -189,29 +190,28 @@ void runSimulate() {
 		caculate_rhop(rho, rhop, config);
 
 		hom_H.update_Host(rhop);
-		hom_H.
+		hom_H.simulate();
 
 		clock_t end = clock();
 		double elapsed_time = static_cast<double>(end - start) / CLOCKS_PER_SEC;
-		ofs << elapsed_time << std::endl;
 	}
 }
 std::vector<float> runCustom(cfg::HomoConfig config, std::vector<float> *rho0 = nullptr) {
-	//std::ofstream ofs;
-	//int reso = config.reso[0];
-	//auto tt = config.target_tensor;
-	//std::string filename;
-	//filename = std::to_string(config.reso[0]) + "_";
-	//for (int i = 0; i < 6; i++) {
-	//	filename += std::to_string(int(tt[i]));
-	//}
-	//std::string readname;
-	//readname = std::to_string(256) + "_";
-	//for (int i = 0; i < 6; i++) {
-	//	readname += std::to_string(int(tt[i]));
-	//}
-	//ofs.open(filename + ".txt", std::ios::app);
-	//config.testname = readname;
+	std::ofstream ofs;
+	int reso = config.reso[0];
+	auto tt = config.target_tensor;
+	std::string filename;
+	filename = std::to_string(config.reso[0]) + "_";
+	for (int i = 0; i < 6; i++) {
+		filename += std::to_string(int(tt[i]));
+	}
+	std::string readname;
+	readname = std::to_string(256) + "_";
+	for (int i = 0; i < 6; i++) {
+		readname += std::to_string(int(tt[i]));
+	}
+	ofs.open(filename + ".txt", std::ios::app);
+	config.testname = readname;
 	int ne = pow(reso, 3);
 	Homogenization_H hom_H(config);
 	hom_H.ConfigDiagPrecondition(0);

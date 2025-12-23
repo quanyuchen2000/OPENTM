@@ -448,10 +448,12 @@ void Grid_H::useFchar(int k)
 		enforce_unit_macro_strain(k);
 		pad_vertex_data(f_g);
 	}
-	if (0) {
-		char buf[100];
-		sprintf_s(buf, "./fchar%d", k);
-		v_write(buf, f_g[0], true);
+}
+void Grid_H::useU()
+{
+	useGrid_g();
+	if (cellReso[0] >= MIN_TRANSFER) {
+		enforce_U();
 	}
 }
 
@@ -885,6 +887,7 @@ void homo::Grid_H::enforce_vertex_boundary_block(std::vector<VT>& v, int blockid
 				const int ngsv = n_gsvertices();
 				switch (taskid) {
 				case 0:
+					if (offset[0] == 1) break;
 					for (int i = 1; i < MIN_TRANSFER + 2; i++) {
 						for (int j = 1; j < MIN_TRANSFER + 2; j++) {
 							int pos[3] = { MIN_TRANSFER + 1, i, j };
@@ -893,10 +896,12 @@ void homo::Grid_H::enforce_vertex_boundary_block(std::vector<VT>& v, int blockid
 							new_offset[0] = (new_offset[0] + 1) % block_numx;
 							pos[0] = 1;
 							if (i == MIN_TRANSFER + 1) {
+								if (new_offset[1] == 0) continue;
 								pos[1] = 1;
 								new_offset[1] = (new_offset[1] + 1) % block_numy;
 							}
 							if (j == MIN_TRANSFER + 1) {
+								if (new_offset[2] == 0) continue;
 								pos[2] = 1;
 								new_offset[2] = (new_offset[2] + 1) % block_numz;
 							}
@@ -907,6 +912,7 @@ void homo::Grid_H::enforce_vertex_boundary_block(std::vector<VT>& v, int blockid
 					}
 					break;
 				case 1:
+					if (offset[1] == 1) break;
 					for (int j = 1; j < MIN_TRANSFER + 2; j++) {
 						for (int i = 1; i < MIN_TRANSFER + 2; i++) {
 							int pos[3] = { i, MIN_TRANSFER + 1, j };
@@ -915,10 +921,12 @@ void homo::Grid_H::enforce_vertex_boundary_block(std::vector<VT>& v, int blockid
 							new_offset[1] = (new_offset[1] + 1) % block_numy;
 							pos[1] = 1;
 							if (i == MIN_TRANSFER + 1) {
+								if (offset[0] == 1) continue;
 								pos[0] = 1;
 								new_offset[0] = (new_offset[0] + 1) % block_numx;
 							}
 							if (j == MIN_TRANSFER + 1) {
+								if (offset[2] == 1) break;
 								pos[2] = 1;
 								new_offset[2] = (new_offset[2] + 1) % block_numz;
 							}
@@ -929,6 +937,7 @@ void homo::Grid_H::enforce_vertex_boundary_block(std::vector<VT>& v, int blockid
 					}
 					break;
 				case 2:
+					if (offset[2] == 1) break;
 					for (int j = 1; j < MIN_TRANSFER + 2; j++) {
 						for (int i = 1; i < MIN_TRANSFER + 2; i++) {
 							int pos[3] = { i, j, MIN_TRANSFER + 1 };
@@ -937,10 +946,12 @@ void homo::Grid_H::enforce_vertex_boundary_block(std::vector<VT>& v, int blockid
 							new_offset[2] = (new_offset[2] + 1) % block_numz;
 							pos[2] = 1;
 							if (i == MIN_TRANSFER + 1) {
+								if (offset[0] == 1) continue;
 								pos[0] = 1;
 								new_offset[0] = (new_offset[0] + 1) % block_numx;
 							}
 							if (j == MIN_TRANSFER + 1) {
+								if (offset[1] == 1) continue;
 								pos[1] = 1;
 								new_offset[1] = (new_offset[1] + 1) % block_numy;
 							}

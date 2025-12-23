@@ -193,88 +193,13 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		int block_num = block_numx * block_numy * block_numz;
 		int block_len = grids[0]->n_gsvertices();
 		grids[0]->useGrid_g();
+		for (int i = 0; i < 1000; i++) {
+			gsGrid0(block_num);
+			gsGrid1(block_num);
 
-		gsGrid0(block_num);
-		gsGrid1(block_num);
-
-
-		double res = norm_host(grids[0]->r_h);
-		printf("residual is:%lf\n", res);
-		grids[1]->reset_force();
-		grids[1]->useGrid_g();
-		{
-			grids[0]->enforce_vertex_boundary_block(grids[0]->r_h, 0);
-			grids[0]->joint_vertex_boundary_block();
-			grids[0]->use_block_r_ggs(0);
-			grids[0]->enforce_vertex_boundary_block(grids[0]->r_h, 1);
-			for (int i = 0; i < block_num - 1; i++) {
-				cudaDeviceSynchronize();
-				grids[0]->joint_vertex_boundary_block();
-				if (i + 2 < block_num) {
-					grids[0]->enforce_vertex_boundary_block(grids[0]->r_h, i + 2);
-				}
-				grids[0]->use_block_r_ggs(i + 1);
-				grids[1]->restrict_residual(i);
-				std::swap(grids[0]->current, grids[0]->next);
-			}
-			grids[1]->restrict_residual(block_num - 1);
-			grids[1]->pad_vertex_data(grids[1]->f_g);
-			grids[1]->reset_displacement();
+			double res = norm_host(grids[0]->r_h);
+			printf("residual is:%lf\n", res);
 		}
-	}
-	grids[1]->gs_relaxation(w_SOR);
-	for (int i = 2; i < grids.size(); i++) {
-		grids[i - 1]->update_residual();
-		grids[i]->restrict_residual();
-		grids[i]->reset_displacement();
-		if (i == grids.size() - 1) {
-			grids[i]->solveHostEquation();
-			grids[i]->update_residual();
-		}
-		else {
-			grids[i]->gs_relaxation(w_SOR);
-		}
-	}
-
-	for (int i = grids.size() - 2; i > 0; i--) {
-		grids[i]->prolongate_correction();
-		grids[i]->gs_relaxation(w_SOR);
-		grids[i]->update_residual();
-	}
-	if (!grids[0]->use_host_memory) {
-		grids[0]->prolongate_correction();
-		grids[0]->gs_relaxation(w_SOR);
-		grids[0]->update_residual();
-	}
-	else {
-		auto cellReso = grids[0]->cellReso;
-		int block_numx = (cellReso[0] / MIN_TRANSFER);
-		int block_numy = (cellReso[1] / MIN_TRANSFER);
-		int block_numz = (cellReso[2] / MIN_TRANSFER);
-		int block_num = block_numx * block_numy * block_numz;
-		int block_len = grids[0]->n_gsvertices();
-		grids[0]->useGrid_g();
-
-		grids[0]->use_block_u_ggs(0);
-		for (int i = 0; i < block_num - 1; i++) {
-			cudaDeviceSynchronize();
-			if (i >= 1) { grids[0]->write_block_u_ggs(i - 1); }
-			grids[0]->use_block_u_ggs(i + 1);
-			grids[0]->prolongate_correction(i);
-			std::swap(grids[0]->current, grids[0]->next);
-		}
-		cudaDeviceSynchronize();
-		grids[0]->write_block_u_ggs(block_num - 2);
-		cudaDeviceSynchronize();
-		grids[0]->prolongate_correction(block_num - 1);
-		grids[0]->write_block_u_ggs(block_num - 1, false);
-		cudaDeviceSynchronize();
-
-		//grids[0]->enforce_vertex_boundary(grids[0]->u_h);
-		//Grid0(block_num);
-		gsGrid0(block_num);
-		gsGrid1(block_num);
-		grids[0]->enforce_vertex_boundary(grids[0]->r_h);
 	}
 	return;
 }

@@ -56,6 +56,8 @@ enum  FlagBit : uint16_t {
 struct FlagBase {
 	uint16_t flagbits;
 	__host_device_func bool is_boundary(void) { return flagbits & BOUNDARY_MASK; }
+	__host_device_func bool is_l_boundary(void) { return flagbits & LEFT_BOUNDARY; }
+	__host_device_func bool is_r_boundary(void) { return flagbits & RIGHT_BOUNDARY; }
 	__host_device_func bool is_set(FlagBit flag) { return flagbits & flag; }
 	__host_device_func bool is_min_boundary(void) { return flagbits & MIN_BOUNDARY_MASK; }
 	__host_device_func bool is_max_boundary(void) { return flagbits & MAX_BOUNDARY_MASK; }
@@ -298,6 +300,7 @@ struct Grid_H {
 	void enforce_unit_macro_strain(int istrain);
 
 	void enforce_unit_macro_strain_host();
+	void enforce_U();
 	void enforce_unit_macro_strain_host(int istrain);
 
 	void lexiufile(int direct);
@@ -383,7 +386,6 @@ struct Grid_H {
 	void enforce_period_stencil(bool additive);
 
 	void enforce_period_boundary(VT* v[1], bool additive = false);
-
 	void enforce_period_vertex(double* v[1], bool additive = false);
 	void enforce_period_vertex(half* v[1], bool additive = false);
 	void enforce_period_vertex(float* v[1], bool additive = false);

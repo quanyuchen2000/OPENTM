@@ -744,6 +744,8 @@ __global__ void gs_relaxation_otf_kernel_host_H(
 					if (!nvflag.is_fiction()) {
 						float u = { ulist[vneighId] };
 						u = ((bx | by | bz) == 0 && vflag.is_dirichlet_boundary()) ? 0.f : u;
+						if (bx == 0 && vflag.is_l_boundary()) u = 433;
+						if (bx == 1 && vflag.is_r_boundary()) u = 233;
 						KeU += KE[vselfrow][i] * u;
 					}
 				}
@@ -779,6 +781,8 @@ __global__ void gs_relaxation_otf_kernel_host_H(
 
 		u = ((bx | by | bz) == 0 && vflag.is_dirichlet_boundary()) ? 0.f : u;
 		// update
+		if (bx == 0 && vflag.is_l_boundary()) u = 433;
+		if (bx == 1 && vflag.is_r_boundary()) u = 233;
 		ulist[vid] = u;
 	}
 }
@@ -1824,9 +1828,90 @@ __global__ void enforce_unit_macro_strain_kernel_H(
 	fcharlist[0][vid] = fchar;
 }
 
+template<typename T>
+__global__ void enforce_U_H(
+	int nv, devArray_t<Grid_H::VT*, 1> ucharlist, VertexFlags* vflags, CellFlags* eflags, T* rholist, int reso, int blockid
+) {
+	bool fiction = false;
+	size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+	if (tid >= nv) {
+		fiction = true;
+		return;
+	}
+
+	VertexFlags vflag;
+	if (!fiction) {
+		vflag = vflags[tid];
+		fiction = vflag.is_fiction();
+	}
+	float uchar = 0.;
+	do {
+		if (vflag.is_period_padding() || vflag.is_fiction()) break;
+		if (blockid % 2 == 0 && vflag.is_l_boundary()) {
+			uchar = 433.;
+		}
+		else if (blockid % 2 == 1 && vflag.is_r_boundary()) {
+			uchar = 233.;
+		}
+	} while (0);
+	ucharlist[0][tid] = uchar;
+}
+
 void homo::Grid_H::enforce_unit_macro_strain_host()
 {
 	f_h.assign(f_h.size(), 0);
+}
+
+void homo::Grid_H::enforce_U() {
+	useGrid_g();
+	cuda_error_check;
+	VertexFlags* vflags = vertflag;
+	CellFlags* eflags = cellflag;
+	size_t grid_size, block_size;
+	// for blocks do below
+	int blockx, blocky, blockz;
+	blockx = cellReso[0] / MIN_TRANSFER;
+	blocky = cellReso[1] / MIN_TRANSFER;
+	blockz = cellReso[2] / MIN_TRANSFER;
+	int block_num = blockx * blocky * blockz;
+	use_block_rhogs(0);
+	for (int i = 0; i < block_num - 1; i++) {
+		cudaDeviceSynchronize();
+		if (i >= 1) {
+			write_block_u_ggs(i - 1);
+		}
+		use_block_rhogs(i + 1);
+		float* tmp;
+		if (current) {
+			tmp = getMem().getBuffer("temp_rho0")->data<float>();
+		}
+		else {
+			tmp = getMem().getBuffer("temp_rho1")->data<float>();
+		}
+		update_hostgs(tmp);
+		devArray_t<VT*, 1> ucharlist{ u_g[current] };
+
+		make_kernel_param(&grid_size, &block_size, n_gsvertices(), 256);
+		enforce_U_H << <grid_size, block_size, 0, stream[current] >> > (n_gsvertices(), ucharlist, vflags, eflags, rho_g, MIN_TRANSFER, i);
+		std::swap(current, next);
+	}
+	cudaDeviceSynchronize();
+	write_block_u_ggs(block_num - 2);
+
+	float* tmp;
+	if (current) {
+		tmp = getMem().getBuffer("temp_rho0")->data<float>();
+	}
+	else {
+		tmp = getMem().getBuffer("temp_rho1")->data<float>();
+	}
+	update_hostgs(tmp);
+	devArray_t<VT*, 1> ucharlist{ u_g[current] };
+	make_kernel_param(&grid_size, &block_size, n_gsvertices(), 256);
+	enforce_U_H << <grid_size, block_size, 0, stream[current] >> > (n_gsvertices(), ucharlist, vflags, eflags, rho_g, MIN_TRANSFER, block_num-1);
+	write_block_u_ggs(block_num - 1, false);
+	cudaDeviceSynchronize();
+	std::swap(current, next);
 }
 void homo::Grid_H::enforce_unit_macro_strain_host(int istrain)
 {

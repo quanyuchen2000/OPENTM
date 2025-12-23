@@ -23,7 +23,7 @@ void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
 	}
 	else if (config.winit == cfg::InitWay::manual) {
 		int subreso = 256;
-		std::string fname = config.testname + ".vdb";
+		std::string fname = "64_1208040402020.vdb";
 		printf("reading density %s...", fname.c_str());
 		std::vector<int> pos[3];
 		std::vector<float> value;
@@ -40,17 +40,11 @@ void initDensity_Host(std::vector<float>& rho, cfg::HomoConfig config) {
 		printf(" reso = (%d, %d, %d)\n", reso[0], reso[1], reso[2]);
 		int ne = reso[0] * reso[1] * reso[2];
 		std::vector<float> newvalues(ne, 0);
-		//std::vector<int> sta(11, 0);
 		for (int i = 0; i < value.size(); i++) {
 			int p[3] = { pos[0][i] - origin[0], pos[1][i] - origin[1], pos[2][i] - origin[2] };
 			int lexid = p[0] + p[1] * reso[0] + p[2] * reso[0] * reso[1];
 			newvalues[lexid] = value[i];
-			//sta[int(value[i] * 10)]++;
 		}
-		//for (int i = 0; i < 11; i++) {
-		//	std::cout << sta[i] << std::endl;
-		//}
-		//exit(0);
 		const int block_numx = resox / MIN_TRANSFER;
 		const int block_numy = resoy / MIN_TRANSFER;
 		const int block_numz = resoz / MIN_TRANSFER;
