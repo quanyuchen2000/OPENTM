@@ -448,10 +448,12 @@ void Grid_H::useFchar(int k)
 		enforce_unit_macro_strain(k);
 		pad_vertex_data(f_g);
 	}
-	if (0) {
-		char buf[100];
-		sprintf_s(buf, "./fchar%d", k);
-		v_write(buf, f_g[0], true);
+}
+void Grid_H::useU()
+{
+	useGrid_g();
+	if (cellReso[0] >= MIN_TRANSFER) {
+		enforce_U();
 	}
 }
 
