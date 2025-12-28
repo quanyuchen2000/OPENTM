@@ -82,6 +82,20 @@ void homo::MG_H::Grid0(int block_num) {
 	}
 	grids[0]->enforce_vertex_boundary(grids[0]->r_h);
 }
+void homo::MG_H::CountU(int block_num) {
+	grids[0]->u_h;
+	int count233 = 0;
+	int count433 = 0;
+	for (auto i : grids[0]->u_h) {
+		if (abs(i - 233.) < 1e-6) {
+			count233++;
+		}
+		if (abs(i - 433.) < 1e-6) {
+			count433++;
+		}
+	}
+	std::cout << "233:" << count233 << "433:" << count433 << std::endl;
+}
 void homo::MG_H::gsGrid0(int block_num) {
 	grids[0]->enforce_vertex_boundary_block(grids[0]->u_h, 0);
 	grids[0]->joint_vertex_boundary_block();
@@ -194,6 +208,7 @@ void homo::MG_H::v_cycle(float w_SOR /*= 1.f*/, int pre /*= 1*/, int post /*= 1*
 		int block_len = grids[0]->n_gsvertices();
 		grids[0]->useGrid_g();
 		for (int i = 0; i < 1000; i++) {
+			CountU(block_num);
 			gsGrid0(block_num);
 			gsGrid1(block_num);
 
@@ -248,38 +263,6 @@ double homo::MG_H::solveEquation(double tol /*= 1e-2*/, bool with_guess /*= true
 		}
 		else {
 			rel_res = grids[0]->residual() / (fnorm + 1e-10);
-		}
-		if (rel_res > 10 || iter >= 199) {
-			//throw std::runtime_error("numerical failure");
-			if (rel_res > 10) {
-				printf("\033[31m\nnumerical explode, resetting initial guess...\033[0m\n");
-				std::cerr << "\033[31m\nnumerical explode, resetting initial guess...\033[0m\n";
-			}
-			else {
-				printf("\033[31mFailed to converge\033[0m\n");
-				std::cerr << "\033[31m\nnumerical explode, resetting initial guess...\033[0m\n";
-			}
-			overflow_counter--;
-			if (overflow_counter > 0) {
-			}
-			else {
-				printf("\033[31mFailed\033[0m\n");
-				throw std::runtime_error("MG numerical explode");
-			}
-			enable_translate_displacement = true;
-
-			auto& gc = *grids.rbegin();
-			// write coarsest force
-			gc->v_write(getPath("berr"), gc->f_g[0], true);
-			// write coarsest system matrix
-			std::ofstream ofs(getPath("Khosterr")); ofs << gc->Khost; ofs.close();
-			// write solved x
-			gc->v_write(getPath("xerr"), gc->u_g[0], true);
-			// write gs pos
-			gc->writeGsVertexPos(getPath("poserr"));
-			grids[0]->reset_displacement();
-			grids[0]->writeDensity(getPath("rhoerr"), VoxelIOFormat::openVDB);
-			grids[0]->reset_displacement();
 		}
 		errlist.emplace_back(rel_res);
 		printf("rel_res = %4.2lf%%    It.%d       \r", rel_res * 100, iter);

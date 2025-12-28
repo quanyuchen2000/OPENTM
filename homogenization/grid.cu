@@ -781,8 +781,8 @@ __global__ void gs_relaxation_otf_kernel_host_H(
 
 		u = ((bx | by | bz) == 0 && vflag.is_dirichlet_boundary()) ? 0.f : u;
 		// update
-		if (bx == 0 && vflag.is_l_boundary()) u = 433;
-		if (bx == 1 && vflag.is_r_boundary()) u = 233;
+		if (bx == 0 && vflag.is_l_boundary()) u = 433.;
+		if (bx == 1 && vflag.is_r_boundary()) u = 233.;
 		ulist[vid] = u;
 	}
 }
